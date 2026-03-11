@@ -27,8 +27,10 @@ router.post('/', auth, async (req, res) => {
     const q_yes = parseFloat(m.q_yes);
     const q_no = parseFloat(m.q_no);
     const total = q_yes + q_no;
-    const prob_before = side === 'yes' ? q_yes / total : q_no / total;
-    const potential_payout = (parseFloat(amount) / prob_before).toFixed(2);
+    const TAXA_CASA = 0.02; // 2%
+const amount_liquido = parseFloat(amount) * (1 - TAXA_CASA);
+const prob_before = side === 'yes' ? q_yes / total : q_no / total;
+const potential_payout = (amount_liquido / prob_before).toFixed(2);
 
     if (side === 'yes') {
       await pool.query('UPDATE markets SET q_yes = q_yes + $1 WHERE id = $2', [amount, market_id]);
