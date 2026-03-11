@@ -42,13 +42,13 @@ async function processReferralBonus(userId, amount) {
 
     // Bônus do indicado: soma no balance total E registra como locked
     await pool.query(
-      'UPDATE users SET balance = balance + $1, bonus_locked = bonus_locked + $1 WHERE id = $2',
+      'UPDATE users SET balance = COALESCE(balance, 0) + $1, bonus_locked = COALESCE(bonus_locked, 0) + $1, bonus_balance = COALESCE(bonus_balance, 0) + $1 WHERE id = $2',
       [REFERRED_BONUS, userId]
     );
 
     // Bônus do indicador: soma no balance total E registra como locked
     await pool.query(
-      'UPDATE users SET balance = balance + $1, bonus_locked = bonus_locked + $1 WHERE id = $2',
+      'UPDATE users SET balance = COALESCE(balance, 0) + $1, bonus_locked = COALESCE(bonus_locked, 0) + $1, bonus_balance = COALESCE(bonus_balance, 0) + $1 WHERE id = $2',
       [REFERRER_BONUS, u.referred_by]
     );
 

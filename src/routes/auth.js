@@ -30,8 +30,8 @@ router.post('/register', async (req, res) => {
     }
 
     const result = await pool.query(
-      `INSERT INTO users (username, email, password_hash, referral_code, referred_by)
-       VALUES ($1, $2, $3, $4, $5)
+      `INSERT INTO users (username, email, password_hash, referral_code, referred_by, balance, bonus_balance, bonus_locked, bonus_bets_count, first_deposit_done)
+       VALUES ($1, $2, $3, $4, $5, 0, 0, 0, 0, FALSE)
        RETURNING id, username as name, email, balance, bonus_balance`,
       [name, email, hash, code, referrerId]
     );
