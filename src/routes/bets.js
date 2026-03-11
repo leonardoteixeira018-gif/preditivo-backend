@@ -13,6 +13,11 @@ router.post('/', auth, async (req, res) => {
     const market = await pool.query('SELECT * FROM markets WHERE id = $1', [market_id]);
     if (!market.rows.length) return res.status(404).json({ error: 'Mercado não encontrado' });
 
+    // BLOQUEIO: mercado já resolvido
+    if (market.rows[0].resolved_at) {
+      return res.status(400).json({ error: 'Este mercado já foi encerrado' });
+    }
+
     const user = await pool.query('SELECT * FROM users WHERE id = $1', [req.user.id]);
     if (parseFloat(user.rows[0].balance) < parseFloat(amount)) {
       return res.status(400).json({ error: 'Saldo insuficiente' });
@@ -25,7 +30,6 @@ router.post('/', auth, async (req, res) => {
     const prob_before = side === 'yes' ? q_yes / total : q_no / total;
     const potential_payout = (parseFloat(amount) / prob_before).toFixed(2);
 
-    // Atualiza q_yes ou q_no conforme a aposta — probabilidade dinâmica
     if (side === 'yes') {
       await pool.query('UPDATE markets SET q_yes = q_yes + $1 WHERE id = $2', [amount, market_id]);
     } else {
@@ -39,13 +43,12 @@ router.post('/', auth, async (req, res) => {
       [req.user.id, market_id, side, amount, potential_payout, 'open']
     );
 
-    // Calcula nova probabilidade após aposta
     const new_market = await pool.query('SELECT q_yes, q_no FROM markets WHERE id = $1', [market_id]);
     const nq_yes = parseFloat(new_market.rows[0].q_yes);
     const nq_no = parseFloat(new_market.rows[0].q_no);
     const new_prob_yes = Math.round((nq_yes / (nq_yes + nq_no)) * 100);
-
     const new_balance = parseFloat(user.rows[0].balance) - parseFloat(amount);
+
     res.json({ 
       bet: bet.rows[0], 
       new_balance,
