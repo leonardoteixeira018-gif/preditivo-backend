@@ -26,4 +26,15 @@ router.get('/my', auth, async (req, res) => {
   } catch(err) { res.status(500).json({ error: err.message }); }
 });
 
+router.get('/my', auth, async (req, res) => {
+  try {
+    const result = await pool.query(
+      'SELECT * FROM deposits WHERE user_id = $1 ORDER BY created_at DESC',
+      [req.user.id]
+    );
+    res.json(result.rows);
+  } catch(err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 module.exports = router;
