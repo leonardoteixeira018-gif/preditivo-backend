@@ -2,39 +2,63 @@ const router = require('express').Router();
 const pool = require('../lib/db');
 const auth = require('../middleware/auth');
 
-// POST /deposits — usuário registra intenção de depósito
+const REFERRAL_MIN_DEPOSIT = 100;
+const REFERRER_BONUS = 50;
+const REFERRED_BONUS = 20;
+
 router.post('/', auth, async (req, res) => {
   try {
     const { amount, code } = req.body;
-    if (!amount || amount < 10) return res.status(400).json({ error: 'Valor mínimo R$10' });
     const result = await pool.query(
       'INSERT INTO deposits (user_id, amount, code, status) VALUES ($1, $2, $3, $4) RETURNING *',
       [req.user.id, amount, code, 'pending']
     );
     res.json(result.rows[0]);
-  } catch(err) { res.status(500).json({ error: err.message }); }
-});
-
-// GET /deposits/my — histórico do usuário
-router.get('/my', auth, async (req, res) => {
-  try {
-    const result = await pool.query(
-      'SELECT * FROM deposits WHERE user_id = $1 ORDER BY created_at DESC',
-      [req.user.id]
-    );
-    res.json(result.rows);
-  } catch(err) { res.status(500).json({ error: err.message }); }
-});
-
-router.get('/my', auth, async (req, res) => {
-  try {
-    const result = await pool.query(
-      'SELECT * FROM deposits WHERE user_id = $1 ORDER BY created_at DESC',
-      [req.user.id]
-    );
-    res.json(result.rows);
-  } catch(err) {
+  } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
+
+router.get('/my', auth, async (req, res) => {
+  try {
+    const result = await pool.query(
+      'SELECT * FROM deposits WHERE user_id = $1 ORDER BY created_at DESC',
+      [req.user.id]
+    );
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Função exportada para ser usada pelo admin ao confirmar depósito
+async function processReferralBonus(userId, amount) {
+  try {
+    const user = await pool.query('SELECT * FROM users WHERE id = $1', [userId]);
+    if (!user.rows.length) return;
+    const u = user.rows[0];
+
+    // Só processa se: tem referrer, não fez primeiro depósito ainda, e valor >= 100
+    if (!u.referred_by || u.first_deposit_done || parseFloat(amount) < REFERRAL_MIN_DEPOSIT) return;
+
+    // Marca primeiro depósito
+    await pool.query('UPDATE users SET first_deposit_done = TRUE WHERE id = $1', [userId]);
+
+    // Bônus para quem foi convidado (bonus_balance, não sacável)
+    await pool.query('UPDATE users SET bonus_balance = bonus_balance + $1 WHERE id = $2', [REFERRED_BONUS, userId]);
+
+    // Bônus para quem convidou (bonus_balance, não sacável)
+    await pool.query('UPDATE users SET bonus_balance = bonus_balance + $1 WHERE id = $2', [REFERRER_BONUS, u.referred_by]);
+
+    // Registra no histórico
+    await pool.query(
+      'INSERT INTO referral_bonuses (referrer_id, referred_id, type, referrer_amount, referred_amount) VALUES ($1, $2, $3, $4, $5)',
+      [u.referred_by, userId, 'deposit', REFERRER_BONUS, REFERRED_BONUS]
+    );
+  } catch (err) {
+    console.error('Referral bonus error:', err.message);
+  }
+}
+
 module.exports = router;
+module.exports.processReferralBonus = processReferralBonus;
