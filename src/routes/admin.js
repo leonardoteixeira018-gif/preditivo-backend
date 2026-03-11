@@ -47,23 +47,23 @@ router.post('/balance', async (req, res) => {
 
 router.get('/receita', async (req, res) => {
   try {
-    // Total apostado
     const totalApostado = await pool.query(`
       SELECT COALESCE(SUM(amount), 0) as total FROM bets
     `);
 
-    // Total pago em premios (apostas won)
     const totalPago = await pool.query(`
       SELECT COALESCE(SUM(potential_payout), 0) as total FROM bets WHERE status = 'won'
     `);
 
-    // Apostas por status
+    const taxaColetada = await pool.query(`
+      SELECT COALESCE(SUM(taxa), 0) as total FROM bets
+    `);
+
     const porStatus = await pool.query(`
       SELECT status, COUNT(*) as count, COALESCE(SUM(amount), 0) as volume
       FROM bets GROUP BY status
     `);
 
-    // Receita por mercado
     const porMercado = await pool.query(`
       SELECT 
         m.title,
@@ -72,6 +72,7 @@ router.get('/receita', async (req, res) => {
         COUNT(b.id) as total_apostas,
         COALESCE(SUM(b.amount), 0) as total_apostado,
         COALESCE(SUM(CASE WHEN b.status = 'won' THEN b.potential_payout ELSE 0 END), 0) as total_pago,
+        COALESCE(SUM(b.taxa), 0) as taxa_coletada,
         COALESCE(SUM(b.amount), 0) - COALESCE(SUM(CASE WHEN b.status = 'won' THEN b.potential_payout ELSE 0 END), 0) as spread
       FROM markets m
       LEFT JOIN bets b ON b.market_id = m.id
@@ -79,7 +80,6 @@ router.get('/receita', async (req, res) => {
       ORDER BY total_apostado DESC
     `);
 
-    // Depositos confirmados
     const depositos = await pool.query(`
       SELECT COALESCE(SUM(amount), 0) as total FROM deposits WHERE status = 'confirmed'
     `);
@@ -91,6 +91,7 @@ router.get('/receita', async (req, res) => {
       total_apostado: entrada,
       total_pago: saida,
       spread_retido: entrada - saida,
+      taxa_coletada: parseFloat(taxaColetada.rows[0].total),
       total_depositado: parseFloat(depositos.rows[0].total),
       por_status: porStatus.rows,
       por_mercado: porMercado.rows
