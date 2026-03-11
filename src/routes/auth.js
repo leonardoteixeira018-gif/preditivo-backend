@@ -2,6 +2,7 @@ const router = require('express').Router();
 const pool = require('../lib/db');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const auth = require('../middleware/auth');
 
 router.post('/register', async (req, res) => {
   try {
@@ -35,11 +36,26 @@ router.post('/login', async (req, res) => {
   }
 });
 
-router.get('/me', require('../middleware/auth'), async (req, res) => {
+router.get('/me', auth, async (req, res) => {
   try {
     const result = await pool.query('SELECT id, username as name, email, balance FROM users WHERE id = $1', [req.user.id]);
     res.json(result.rows[0]);
   } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.patch('/profile', auth, async (req, res) => {
+  try {
+    const { name, password } = req.body;
+    if (password) {
+      const hash = await bcrypt.hash(password, 10);
+      await pool.query('UPDATE users SET username = $1, password_hash = $2 WHERE id = $3', [name, hash, req.user.id]);
+    } else {
+      await pool.query('UPDATE users SET username = $1 WHERE id = $2', [name, req.user.id]);
+    }
+    res.json({ ok: true });
+  } catch(err) {
     res.status(500).json({ error: err.message });
   }
 });
