@@ -1,5 +1,6 @@
 const router = require('express').Router();
 const pool = require('../lib/db');
+const { processReferralBonus } = require('./deposits');
 
 router.get('/deposits', async (req, res) => {
   try {
@@ -7,8 +8,7 @@ router.get('/deposits', async (req, res) => {
       SELECT d.*, u.username
       FROM deposits d
       LEFT JOIN users u ON u.id = d.user_id
-      ORDER BY d.created_at DESC
-      LIMIT 100
+      ORDER BY d.created_at DESC LIMIT 100
     `);
     res.json(result.rows);
   } catch(err) { res.status(500).json({ error: err.message }); }
@@ -19,6 +19,8 @@ router.post('/deposits/:id/confirm', async (req, res) => {
     const { user_id, amount } = req.body;
     await pool.query('UPDATE deposits SET status = $1 WHERE id = $2', ['confirmed', req.params.id]);
     await pool.query('UPDATE users SET balance = balance + $1 WHERE id = $2', [amount, user_id]);
+    // Processa bônus de referral se elegível
+    await processReferralBonus(user_id, amount);
     res.json({ ok: true });
   } catch(err) { res.status(500).json({ error: err.message }); }
 });
@@ -32,7 +34,7 @@ router.post('/deposits/:id/reject', async (req, res) => {
 
 router.get('/users', async (req, res) => {
   try {
-    const result = await pool.query('SELECT id, username, email, balance, created_at FROM users ORDER BY created_at DESC');
+    const result = await pool.query('SELECT id, username, email, balance, bonus_balance, created_at FROM users ORDER BY created_at DESC');
     res.json(result.rows);
   } catch(err) { res.status(500).json({ error: err.message }); }
 });
@@ -52,8 +54,7 @@ router.get('/receita', async (req, res) => {
     const taxaColetada = await pool.query(`SELECT COALESCE(SUM(taxa), 0) as total FROM bets`);
     const porStatus = await pool.query(`SELECT status, COUNT(*) as count, COALESCE(SUM(amount), 0) as volume FROM bets GROUP BY status`);
     const porMercado = await pool.query(`
-      SELECT 
-        m.title, m.category, m.resolved_outcome,
+      SELECT m.title, m.category, m.resolved_outcome,
         COUNT(b.id) as total_apostas,
         COALESCE(SUM(b.amount), 0) as total_apostado,
         COALESCE(SUM(CASE WHEN b.status = 'won' THEN b.potential_payout ELSE 0 END), 0) as total_pago,
@@ -65,18 +66,14 @@ router.get('/receita', async (req, res) => {
       ORDER BY total_apostado DESC
     `);
     const depositos = await pool.query(`SELECT COALESCE(SUM(amount), 0) as total FROM deposits WHERE status = 'confirmed'`);
-
     const entrada = parseFloat(totalApostado.rows[0].total);
     const saida = parseFloat(totalPago.rows[0].total);
-
     res.json({
-      total_apostado: entrada,
-      total_pago: saida,
+      total_apostado: entrada, total_pago: saida,
       spread_retido: entrada - saida,
       taxa_coletada: parseFloat(taxaColetada.rows[0].total),
       total_depositado: parseFloat(depositos.rows[0].total),
-      por_status: porStatus.rows,
-      por_mercado: porMercado.rows
+      por_status: porStatus.rows, por_mercado: porMercado.rows
     });
   } catch(err) { res.status(500).json({ error: err.message }); }
 });
@@ -94,15 +91,12 @@ router.post('/markets', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// ---- SAQUES ----
 router.get('/withdrawals', async (req, res) => {
   try {
     const result = await pool.query(`
-      SELECT w.*, u.username
-      FROM withdrawals w
+      SELECT w.*, u.username FROM withdrawals w
       LEFT JOIN users u ON u.id = w.user_id
-      ORDER BY w.created_at DESC
-      LIMIT 100
+      ORDER BY w.created_at DESC LIMIT 100
     `);
     res.json(result.rows);
   } catch(err) { res.status(500).json({ error: err.message }); }
