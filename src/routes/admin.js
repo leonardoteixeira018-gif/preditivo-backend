@@ -98,5 +98,20 @@ router.get('/receita', async (req, res) => {
     });
   } catch(err) { res.status(500).json({ error: err.message }); }
 });
+router.post('/markets', async (req, res) => {
+  try {
+    const { title, category, ends_at, description } = req.body;
+    if (!title || !ends_at) return res.status(400).json({ error: 'titulo e ends_at obrigatorios' });
 
+    const result = await pool.query(
+      `INSERT INTO markets (title, category, ends_at, description, q_yes, q_no, b, status)
+       VALUES ($1, $2, $3, $4, 100, 100, 100, 'open') RETURNING *`,
+      [title, category || 'politica', ends_at, description || null]
+    );
+
+    res.json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 module.exports = router;
