@@ -1,7 +1,6 @@
 const router = require('express').Router();
 const pool = require('../lib/db');
 const auth = require('../middleware/auth');
-const { lmsrPrice, lmsrCostForShares } = require('../lib/lmsr');
 
 router.get('/', async (req, res) => {
   try {
@@ -35,20 +34,42 @@ router.post('/', auth, async (req, res) => {
   }
 });
 
-router.post('/:id/resolve', auth, async (req, res) => {
+router.post('/:id/resolve', async (req, res) => {
   try {
-    const { outcome } = req.body; // 'yes' or 'no'
+    const { outcome } = req.body; // 'yes' ou 'no'
     const market = await pool.query('SELECT * FROM markets WHERE id = $1', [req.params.id]);
     if (!market.rows.length) return res.status(404).json({ error: 'Mercado não encontrado' });
-    await pool.query('UPDATE markets SET status = $1, resolved_outcome = $2 WHERE id = $3', ['resolved', outcome, req.params.id]);
-    const bets = await pool.query('SELECT * FROM bets WHERE market_id = $1 AND outcome = $2', [req.params.id, outcome]);
-    for (const bet of bets.rows) {
+    if (market.rows[0].resolved_at) return res.status(400).json({ error: 'Mercado já resolvido' });
+
+    // Marca mercado como resolvido
+    await pool.query(
+      'UPDATE markets SET status = $1, resolved_outcome = $2, resolved_at = NOW() WHERE id = $3',
+      ['resolved', outcome, req.params.id]
+    );
+
+    // Paga os vencedores
+    const winners = await pool.query(
+      'SELECT * FROM bets WHERE market_id = $1 AND side = $2 AND status = $3',
+      [req.params.id, outcome, 'open']
+    );
+
+    for (const bet of winners.rows) {
       const payout = parseFloat(bet.potential_payout);
       await pool.query('UPDATE users SET balance = balance + $1 WHERE id = $2', [payout, bet.user_id]);
-      await pool.query('UPDATE bets SET status = $1 WHERE id = $2', ['won', bet.id]);
+      await pool.query('UPDATE bets SET status = $1, payout = $2 WHERE id = $3', ['won', payout, bet.id]);
     }
-    await pool.query('UPDATE bets SET status = $1 WHERE market_id = $2 AND outcome != $3 AND status = $4', ['lost', req.params.id, outcome, 'pending']);
-    res.json({ success: true });
+
+    // Marca perdedores
+    await pool.query(
+      'UPDATE bets SET status = $1 WHERE market_id = $2 AND side != $3 AND status = $4',
+      ['lost', req.params.id, outcome, 'open']
+    );
+
+    res.json({ 
+      success: true, 
+      winners_paid: winners.rows.length,
+      outcome 
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
