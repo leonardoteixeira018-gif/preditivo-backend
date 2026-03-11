@@ -47,10 +47,19 @@ router.post('/', auth, async (req, res) => {
       [req.user.id, market_id, side, amount, potential_payout, 'open', taxa]
     );
 
+    // Busca probabilidades atualizadas
     const new_market = await pool.query('SELECT q_yes, q_no FROM markets WHERE id = $1', [market_id]);
     const nq_yes = parseFloat(new_market.rows[0].q_yes);
     const nq_no = parseFloat(new_market.rows[0].q_no);
-    const new_prob_yes = Math.round((nq_yes / (nq_yes + nq_no)) * 100);
+    const new_total = nq_yes + nq_no;
+    const new_prob_yes = Math.round((nq_yes / new_total) * 100);
+
+    // Salva historico de probabilidade
+    await pool.query(
+      'INSERT INTO market_history (market_id, prob_yes, prob_no, volume) VALUES ($1,$2,$3,$4)',
+      [market_id, (nq_yes / new_total * 100).toFixed(2), (nq_no / new_total * 100).toFixed(2), parseFloat(amount)]
+    );
+
     const new_balance = parseFloat(user.rows[0].balance) - parseFloat(amount);
 
     res.json({
