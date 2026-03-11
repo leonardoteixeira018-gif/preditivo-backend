@@ -35,26 +35,21 @@ router.get('/my', auth, async (req, res) => {
 async function processReferralBonus(userId, amount) {
   try {
     const user = await pool.query('SELECT * FROM users WHERE id = $1', [userId]);
-    if (!user.rows.length) return;
+    if (!user.rows.length) { console.log('Referral: user not found', userId); return; }
     const u = user.rows[0];
-
-    // Só processa se: tem referrer, não fez primeiro depósito ainda, e valor >= 100
-    if (!u.referred_by || u.first_deposit_done || parseFloat(amount) < REFERRAL_MIN_DEPOSIT) return;
-
-    // Marca primeiro depósito
+    console.log('Referral check:', { referred_by: u.referred_by, first_deposit_done: u.first_deposit_done, amount });
+    if (!u.referred_by || u.first_deposit_done || parseFloat(amount) < REFERRAL_MIN_DEPOSIT) {
+      console.log('Referral: skipped');
+      return;
+    }
     await pool.query('UPDATE users SET first_deposit_done = TRUE WHERE id = $1', [userId]);
-
-    // Bônus para quem foi convidado (bonus_balance, não sacável)
     await pool.query('UPDATE users SET bonus_balance = bonus_balance + $1 WHERE id = $2', [REFERRED_BONUS, userId]);
-
-    // Bônus para quem convidou (bonus_balance, não sacável)
     await pool.query('UPDATE users SET bonus_balance = bonus_balance + $1 WHERE id = $2', [REFERRER_BONUS, u.referred_by]);
-
-    // Registra no histórico
     await pool.query(
       'INSERT INTO referral_bonuses (referrer_id, referred_id, type, referrer_amount, referred_amount) VALUES ($1, $2, $3, $4, $5)',
       [u.referred_by, userId, 'deposit', REFERRER_BONUS, REFERRED_BONUS]
     );
+    console.log('Referral: bonus paid!', { referrer: u.referred_by, referred: userId });
   } catch (err) {
     console.error('Referral bonus error:', err.message);
   }
