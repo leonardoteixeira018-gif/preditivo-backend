@@ -45,4 +45,57 @@ router.post('/balance', async (req, res) => {
   } catch(err) { res.status(500).json({ error: err.message }); }
 });
 
+router.get('/receita', async (req, res) => {
+  try {
+    // Total apostado
+    const totalApostado = await pool.query(`
+      SELECT COALESCE(SUM(amount), 0) as total FROM bets
+    `);
+
+    // Total pago em premios (apostas won)
+    const totalPago = await pool.query(`
+      SELECT COALESCE(SUM(potential_payout), 0) as total FROM bets WHERE status = 'won'
+    `);
+
+    // Apostas por status
+    const porStatus = await pool.query(`
+      SELECT status, COUNT(*) as count, COALESCE(SUM(amount), 0) as volume
+      FROM bets GROUP BY status
+    `);
+
+    // Receita por mercado
+    const porMercado = await pool.query(`
+      SELECT 
+        m.title,
+        m.category,
+        m.resolved_outcome,
+        COUNT(b.id) as total_apostas,
+        COALESCE(SUM(b.amount), 0) as total_apostado,
+        COALESCE(SUM(CASE WHEN b.status = 'won' THEN b.potential_payout ELSE 0 END), 0) as total_pago,
+        COALESCE(SUM(b.amount), 0) - COALESCE(SUM(CASE WHEN b.status = 'won' THEN b.potential_payout ELSE 0 END), 0) as spread
+      FROM markets m
+      LEFT JOIN bets b ON b.market_id = m.id
+      GROUP BY m.id, m.title, m.category, m.resolved_outcome
+      ORDER BY total_apostado DESC
+    `);
+
+    // Depositos confirmados
+    const depositos = await pool.query(`
+      SELECT COALESCE(SUM(amount), 0) as total FROM deposits WHERE status = 'confirmed'
+    `);
+
+    const entrada = parseFloat(totalApostado.rows[0].total);
+    const saida = parseFloat(totalPago.rows[0].total);
+
+    res.json({
+      total_apostado: entrada,
+      total_pago: saida,
+      spread_retido: entrada - saida,
+      total_depositado: parseFloat(depositos.rows[0].total),
+      por_status: porStatus.rows,
+      por_mercado: porMercado.rows
+    });
+  } catch(err) { res.status(500).json({ error: err.message }); }
+});
+
 module.exports = router;
