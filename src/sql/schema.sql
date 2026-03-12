@@ -1,0 +1,109 @@
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
+CREATE TABLE IF NOT EXISTS users (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  username VARCHAR(50) UNIQUE NOT NULL,
+  email VARCHAR(255) UNIQUE NOT NULL,
+  password_hash VARCHAR(255) NOT NULL,
+  balance DECIMAL(18,2) NOT NULL DEFAULT 0,
+  bonus_balance DECIMAL(18,2) NOT NULL DEFAULT 0,
+  bonus_locked DECIMAL(18,2) NOT NULL DEFAULT 0,
+  bonus_bets_count INTEGER NOT NULL DEFAULT 0,
+  first_deposit_done BOOLEAN NOT NULL DEFAULT FALSE,
+  referral_code VARCHAR(20) UNIQUE,
+  referred_by UUID REFERENCES users(id),
+  wallet_address VARCHAR(42),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS markets (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  title TEXT NOT NULL,
+  category VARCHAR(50) NOT NULL DEFAULT 'politica',
+  description TEXT,
+  ends_at TIMESTAMPTZ NOT NULL,
+  resolved_at TIMESTAMPTZ,
+  resolved_outcome VARCHAR(3) CHECK (resolved_outcome IN ('yes', 'no')),
+  q_yes DECIMAL(18,8) NOT NULL DEFAULT 100,
+  q_no DECIMAL(18,8) NOT NULL DEFAULT 100,
+  b DECIMAL(18,8) NOT NULL DEFAULT 100,
+  volume DECIMAL(18,2) NOT NULL DEFAULT 0,
+  status VARCHAR(20) NOT NULL DEFAULT 'open',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS bets (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  market_id UUID NOT NULL REFERENCES markets(id) ON DELETE CASCADE,
+  side VARCHAR(3) NOT NULL CHECK (side IN ('yes', 'no')),
+  amount DECIMAL(18,2) NOT NULL CHECK (amount > 0),
+  potential_payout DECIMAL(18,2) NOT NULL,
+  payout DECIMAL(18,2),
+  taxa DECIMAL(18,2) NOT NULL DEFAULT 0,
+  status VARCHAR(20) NOT NULL DEFAULT 'open',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS market_history (
+  id BIGSERIAL PRIMARY KEY,
+  market_id UUID NOT NULL REFERENCES markets(id) ON DELETE CASCADE,
+  prob_yes DECIMAL(8,2) NOT NULL,
+  prob_no DECIMAL(8,2) NOT NULL,
+  volume DECIMAL(18,2) NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS deposits (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  amount DECIMAL(18,2) NOT NULL CHECK (amount > 0),
+  code TEXT,
+  method VARCHAR(20) NOT NULL DEFAULT 'pix',
+  transak_order_id TEXT UNIQUE,
+  status VARCHAR(20) NOT NULL DEFAULT 'pending',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS withdrawals (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  amount DECIMAL(18,2) NOT NULL CHECK (amount > 0),
+  pix_key TEXT NOT NULL,
+  pix_key_type VARCHAR(30) NOT NULL,
+  status VARCHAR(20) NOT NULL DEFAULT 'pending',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS referral_bonuses (
+  id BIGSERIAL PRIMARY KEY,
+  referrer_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  referred_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  type VARCHAR(30) NOT NULL,
+  referrer_amount DECIMAL(18,2) NOT NULL DEFAULT 0,
+  referred_amount DECIMAL(18,2) NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_bets_user ON bets(user_id);
+CREATE INDEX IF NOT EXISTS idx_bets_market ON bets(market_id);
+CREATE INDEX IF NOT EXISTS idx_markets_category ON markets(category);
+CREATE INDEX IF NOT EXISTS idx_markets_ends_at ON markets(ends_at);
+CREATE INDEX IF NOT EXISTS idx_market_history_market_id ON market_history(market_id);
+CREATE INDEX IF NOT EXISTS idx_deposits_user_id ON deposits(user_id);
+CREATE INDEX IF NOT EXISTS idx_withdrawals_user_id ON withdrawals(user_id);
+CREATE INDEX IF NOT EXISTS idx_referral_bonuses_referrer_id ON referral_bonuses(referrer_id);
+
+CREATE OR REPLACE VIEW ranking AS
+SELECT
+  u.id,
+  u.username,
+  u.balance,
+  COUNT(b.id) AS total_bets,
+  COALESCE(SUM(b.payout), 0) AS total_payout,
+  COALESCE(SUM(b.amount), 0) AS total_wagered,
+  COALESCE(SUM(b.payout) - SUM(b.amount), 0) AS profit
+FROM users u
+LEFT JOIN bets b ON b.user_id = u.id
+GROUP BY u.id, u.username, u.balance
+ORDER BY profit DESC, u.created_at ASC;

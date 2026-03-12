@@ -1,6 +1,6 @@
 const router = require('express').Router();
 const pool = require('../lib/db');
-const auth = require('../middleware/auth');
+const adminAuth = require('../middleware/adminAuth');
 
 async function sendEmail(to, subject, html) {
   try {
@@ -49,12 +49,19 @@ router.get('/:id', async (req, res) => {
   }
 });
 
-router.post('/', auth, async (req, res) => {
+router.post('/', adminAuth, async (req, res) => {
   try {
-    const { title, description, category, closes_at } = req.body;
+    const { title, description, category, ends_at, closes_at } = req.body;
+    const marketEndsAt = ends_at || closes_at;
+    if (!title || !marketEndsAt) {
+      return res.status(400).json({ error: 'title e ends_at sao obrigatorios' });
+    }
+
     const result = await pool.query(
-      'INSERT INTO markets (title, description, category, closes_at, created_by) VALUES ($1, $2, $3, $4, $5) RETURNING *',
-      [title, description, category, closes_at, req.user.id]
+      `INSERT INTO markets (title, description, category, ends_at, q_yes, q_no, b, volume, status)
+       VALUES ($1, $2, $3, $4, 100, 100, 100, 0, 'open')
+       RETURNING *`,
+      [title, description || null, category || 'politica', marketEndsAt]
     );
     res.json(result.rows[0]);
   } catch (err) {
@@ -62,7 +69,7 @@ router.post('/', auth, async (req, res) => {
   }
 });
 
-router.patch('/:id/description', async (req, res) => {
+router.patch('/:id/description', adminAuth, async (req, res) => {
   try {
     const { description } = req.body;
     await pool.query('UPDATE markets SET description = $1 WHERE id = $2', [description, req.params.id]);
@@ -72,7 +79,7 @@ router.patch('/:id/description', async (req, res) => {
   }
 });
 
-router.post('/:id/resolve', async (req, res) => {
+router.post('/:id/resolve', adminAuth, async (req, res) => {
   try {
     const { outcome } = req.body;
     const market = await pool.query('SELECT * FROM markets WHERE id = $1', [req.params.id]);

@@ -15,7 +15,7 @@ API REST para a plataforma de mercados de previsão PrevBR.
 ### 1. Banco de dados (Supabase)
 1. Crie conta em [supabase.com](https://supabase.com)
 2. Crie um novo projeto
-3. Vá em **SQL Editor** e rode o arquivo `sql/schema.sql`
+3. Vá em **SQL Editor** e rode o arquivo `src/sql/schema.sql`
 4. Copie a **Connection String** em Settings → Database
 
 ### 2. Variáveis de ambiente
