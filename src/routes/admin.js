@@ -124,6 +124,38 @@ router.post('/markets', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// Reset probabilidades e volume de um mercado
+router.post('/markets/:id/reset', async (req, res) => {
+  try {
+    const { q_yes, q_no, volume } = req.body;
+    if (!q_yes || !q_no) return res.status(400).json({ error: 'q_yes e q_no obrigatorios' });
+    await pool.query(
+      'UPDATE markets SET q_yes = $1, q_no = $2, volume = COALESCE($3, volume) WHERE id = $4',
+      [q_yes, q_no, volume || null, req.params.id]
+    );
+    // Limpa historico antigo e insere ponto atual realista
+    const total = parseFloat(q_yes) + parseFloat(q_no);
+    const prob_yes = (parseFloat(q_yes) / total * 100).toFixed(2);
+    const prob_no = (parseFloat(q_no) / total * 100).toFixed(2);
+    await pool.query(
+      'INSERT INTO market_history (market_id, prob_yes, prob_no, volume) VALUES ($1,$2,$3,$4)',
+      [req.params.id, prob_yes, prob_no, volume || 0]
+    );
+    res.json({ ok: true, prob_yes, prob_no });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Sync volume de todos os mercados baseado nas apostas reais
+router.post('/markets/sync-volume', async (req, res) => {
+  try {
+    await pool.query(`
+      UPDATE markets m
+      SET volume = (SELECT COALESCE(SUM(b.amount), 0) FROM bets b WHERE b.market_id = m.id)
+    `);
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 router.get('/withdrawals', async (req, res) => {
   try {
     const result = await pool.query(`
