@@ -156,6 +156,25 @@ router.post('/markets/sync-volume', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// Insere multiplos pontos no historico de um mercado (seed de dados)
+router.post('/markets/:id/history-seed', async (req, res) => {
+  try {
+    const { points } = req.body; // [{prob_yes, prob_no, volume, days_ago, hours_ago}]
+    if (!points || !Array.isArray(points)) return res.status(400).json({ error: 'points array required' });
+    let inserted = 0;
+    for (const p of points) {
+      const interval = `${p.days_ago || 0} days ${p.hours_ago || 0} hours`;
+      await pool.query(
+        `INSERT INTO market_history (market_id, prob_yes, prob_no, volume, created_at)
+         VALUES ($1, $2, $3, $4, NOW() - INTERVAL '${interval}')`,
+        [req.params.id, p.prob_yes, p.prob_no, p.volume]
+      );
+      inserted++;
+    }
+    res.json({ ok: true, inserted });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 router.get('/withdrawals', async (req, res) => {
   try {
     const result = await pool.query(`
