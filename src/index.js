@@ -17,6 +17,7 @@ app.use('/deposits',    require('./routes/deposits'));
 app.use('/withdrawals', require('./routes/withdrawals'));
 app.use('/referrals',   require('./routes/referrals'));
 app.use('/admin',       require('./routes/admin'));
+app.use('/transak',     require('./routes/transak'));
 
 app.get('/health', (req, res) => res.json({ status: 'ok', timestamp: new Date() }));
 app.use((req, res) => res.status(404).json({ error: 'Rota não encontrada' }));
