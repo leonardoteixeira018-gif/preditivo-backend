@@ -8,10 +8,10 @@ const REFERRED_BONUS = 20;
 
 router.post('/', auth, async (req, res) => {
   try {
-    const { amount, code } = req.body;
+    const { amount, code, method } = req.body;
     const result = await pool.query(
-      'INSERT INTO deposits (user_id, amount, code, status) VALUES ($1,$2,$3,$4) RETURNING *',
-      [req.user.id, amount, code, 'pending']
+      'INSERT INTO deposits (user_id, amount, code, status, method) VALUES ($1,$2,$3,$4,$5) RETURNING *',
+      [req.user.id, amount, code, 'pending', method || 'pix']
     );
     res.json(result.rows[0]);
   } catch (err) {
