@@ -1,6 +1,10 @@
 const router = require('express').Router();
 const pool = require('../lib/db');
+const adminAuth = require('../middleware/adminAuth');
 const { processReferralBonus } = require('./deposits');
+
+// Protege todas as rotas admin
+router.use(adminAuth);
 
 async function processRollover(userId) {
   try {
@@ -42,8 +46,13 @@ router.get('/deposits', async (req, res) => {
 router.post('/deposits/:id/confirm', async (req, res) => {
   try {
     const { user_id, amount } = req.body;
+    // Idempotência: impede duplo crédito
+    const dep = await pool.query('SELECT status FROM deposits WHERE id = $1', [req.params.id]);
+    if (!dep.rows.length) return res.status(404).json({ error: 'Depósito não encontrado' });
+    if (dep.rows[0].status === 'confirmed') return res.status(400).json({ error: 'Depósito já confirmado' });
+
     await pool.query('UPDATE deposits SET status = $1 WHERE id = $2', ['confirmed', req.params.id]);
-    await pool.query('UPDATE users SET balance = balance + $1 WHERE id = $2', [amount, user_id]);
+    await pool.query('UPDATE users SET balance = COALESCE(balance, 0) + $1 WHERE id = $2', [amount, user_id]);
     await processReferralBonus(user_id, amount);
     res.json({ ok: true });
   } catch(err) { res.status(500).json({ error: err.message }); }
