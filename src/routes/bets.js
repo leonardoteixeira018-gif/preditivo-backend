@@ -51,9 +51,9 @@ router.post('/', auth, async (req, res) => {
     const potential_payout = (amount_liquido / prob_before).toFixed(2);
 
     if (side === 'yes') {
-      await pool.query('UPDATE markets SET q_yes = q_yes + $1 WHERE id = $2', [amt, market_id]);
+      await pool.query('UPDATE markets SET q_yes = q_yes + $1, volume = COALESCE(volume, 0) + $1 WHERE id = $2', [amt, market_id]);
     } else {
-      await pool.query('UPDATE markets SET q_no = q_no + $1 WHERE id = $2', [amt, market_id]);
+      await pool.query('UPDATE markets SET q_no = q_no + $1, volume = COALESCE(volume, 0) + $1 WHERE id = $2', [amt, market_id]);
     }
 
     await pool.query('UPDATE users SET balance = balance - $1 WHERE id = $2', [amt, req.user.id]);
