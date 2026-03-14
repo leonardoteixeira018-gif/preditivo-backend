@@ -285,7 +285,7 @@ router.post('/deposits/:id/confirm', async (req, res) => {
         userInfo.rows[0].email,
         `Deposito confirmado — ${APP_BRAND}`,
         `<h1>Ola, ${userInfo.rows[0].username}!</h1>
-         <p>Seu deposito de <strong>R$${dep.rows[0].amount.toFixed(2)}</strong> foi confirmado manualmente pela nossa equipe.</p>
+         <p>Seu deposito de <strong>R$${parseFloat(dep.rows[0].amount).toFixed(2)}</strong> foi confirmado manualmente pela nossa equipe.</p>
          <p>Seu saldo ja foi atualizado. Boa sorte!</p>`
       );
     }
