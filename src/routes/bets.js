@@ -265,4 +265,22 @@ router.get('/quote', async (req, res) => {
   }
 });
 
+// GET /bets/market/:market_id/book — Retorna o "livro de ordens" (apostas recentes abertas)
+router.get('/market/:market_id/book', async (req, res) => {
+  try {
+    const { market_id } = req.params;
+    const result = await pool.query(
+      `SELECT side, amount, potential_payout, created_at
+       FROM bets
+       WHERE market_id = $1 AND status = 'open'
+       ORDER BY created_at DESC
+       LIMIT 40`,
+      [market_id]
+    );
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;

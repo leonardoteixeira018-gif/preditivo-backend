@@ -1,5 +1,6 @@
 require('dotenv').config();
 const express = require('express');
+const rateLimit = require('express-rate-limit');
 const cors = require('cors');
 const app = express();
 const pool = require('./lib/db');
@@ -22,6 +23,31 @@ app.use(cors({
 }));
 
 app.use(express.json());
+
+// Limitadores de taxa
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutos
+  max: 15, // limite de 15 requisições por IP
+  message: { error: 'Muitas tentativas. Tente novamente em 15 minutos.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+const generalLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 150, // 150 requisições por 15 minutos
+  message: { error: 'Limite de requisições excedido. Tente novamente mais tarde.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+// Aplicar limitadores
+app.use('/auth/login', authLimiter);
+app.use('/auth/register', authLimiter);
+app.use('/auth/forgot-password', authLimiter);
+app.use('/auth/reset-password', authLimiter);
+app.use(generalLimiter);
+
 app.use('/auth', require('./routes/auth'));
 app.use('/markets', require('./routes/markets'));
 app.use('/bets', require('./routes/bets'));
