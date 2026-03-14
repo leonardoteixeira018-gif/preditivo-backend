@@ -289,9 +289,6 @@ router.post('/deposits/:id/confirm', async (req, res) => {
          <p>Seu saldo ja foi atualizado. Boa sorte!</p>`
       );
     }
-
-    res.json({ ok: true });
-
     res.json({ ok: true });
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});

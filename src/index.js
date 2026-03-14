@@ -3,6 +3,9 @@ const express = require('express');
 const rateLimit = require('express-rate-limit');
 const cors = require('cors');
 const app = express();
+
+app.set('trust proxy', 1); // Confia no primeiro proxy (Railway/Vercel)
+
 const pool = require('./lib/db');
 const { APP_URL } = require('./lib/appConfig');
 
