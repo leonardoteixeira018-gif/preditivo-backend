@@ -104,7 +104,7 @@ router.post('/infinitepay/webhook', async (req, res) => {
         userInfo.rows[0].email,
         `Deposito confirmado — ${APP_BRAND}`,
         `<h1>Ola, ${userInfo.rows[0].username}!</h1>
-         <p>Seu deposito de <strong>R$${deposit.amount.toFixed(2)}</strong> foi confirmado e o saldo ja esta disponivel na sua conta.</p>
+         <p>Seu deposito de <strong>R$${parseFloat(deposit.amount).toFixed(2)}</strong> foi confirmado e o saldo ja esta disponivel na sua conta.</p>
          <p>Boa sorte nas suas previsoes!</p>`
       );
     }

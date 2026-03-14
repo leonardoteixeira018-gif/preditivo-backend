@@ -310,264 +310,6 @@ router.post('/deposits/:id/reject', async (req, res) => {
   }
 });
 
-router.get('/users', async (req, res) => {
-  try {
-    const result = await pool.query(
-      'SELECT id, username, email, balance, bonus_balance, created_at, COALESCE(is_bot, false) AS is_bot FROM users ORDER BY created_at DESC'
-    );
-    res.json(result.rows);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-router.post('/balance', async (req, res) => {
-  try {
-    const { user_id, amount } = req.body;
-    await pool.query('UPDATE users SET balance = balance + $1 WHERE id = $2', [
-      amount,
-      user_id
-    ]);
-    res.json({ ok: true });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-router.get('/receita', async (req, res) => {
-  try {
-    const totalApostado = await pool.query(
-      'SELECT COALESCE(SUM(amount), 0) AS total FROM bets'
-    );
-    const totalPago = await pool.query(
-      "SELECT COALESCE(SUM(potential_payout), 0) AS total FROM bets WHERE status = 'won'"
-    );
-    const taxaColetada = await pool.query(
-      'SELECT COALESCE(SUM(taxa), 0) AS total FROM bets'
-    );
-    const porStatus = await pool.query(
-      'SELECT status, COUNT(*) AS count, COALESCE(SUM(amount), 0) AS volume FROM bets GROUP BY status'
-    );
-    const porMercado = await pool.query(`
-      SELECT
-        m.title,
-        m.category,
-        m.resolved_outcome,
-        COUNT(b.id) AS total_apostas,
-        COALESCE(SUM(b.amount), 0) AS total_apostado,
-        COALESCE(SUM(CASE WHEN b.status = 'won' THEN b.potential_payout ELSE 0 END), 0) AS total_pago,
-        COALESCE(SUM(b.taxa), 0) AS taxa_coletada,
-        COALESCE(SUM(b.amount), 0) - COALESCE(SUM(CASE WHEN b.status = 'won' THEN b.potential_payout ELSE 0 END), 0) AS spread
-      FROM markets m
-      LEFT JOIN bets b ON b.market_id = m.id
-      GROUP BY m.id, m.title, m.category, m.resolved_outcome
-      ORDER BY total_apostado DESC
-    `);
-    const depositos = await pool.query(
-      "SELECT COALESCE(SUM(amount), 0) AS total FROM deposits WHERE status = 'confirmed'"
-    );
-
-    const entrada = parseFloat(totalApostado.rows[0].total);
-    const saida = parseFloat(totalPago.rows[0].total);
-
-    const segmentRows = await pool.query(`
-      SELECT
-        CASE WHEN COALESCE(u.is_bot, false) THEN 'artificial' ELSE 'real' END AS segment,
-        COALESCE(SUM(b.amount), 0) AS total_apostado,
-        COALESCE(SUM(CASE WHEN b.status = 'won' THEN b.potential_payout ELSE 0 END), 0) AS total_pago,
-        COALESCE(SUM(b.taxa), 0) AS taxa_coletada,
-        COALESCE(SUM(CASE WHEN b.status = 'won' THEN b.potential_payout - b.amount ELSE 0 END), 0) AS lucro_liquido
-      FROM bets b
-      JOIN users u ON u.id = b.user_id
-      GROUP BY segment
-    `);
-
-    const segmentMap = {
-      real: { total_apostado: 0, total_pago: 0, taxa_coletada: 0, lucro_liquido: 0 },
-      artificial: { total_apostado: 0, total_pago: 0, taxa_coletada: 0, lucro_liquido: 0 }
-    };
-
-    segmentRows.rows.forEach((row) => {
-      segmentMap[row.segment] = {
-        total_apostado: parseFloat(row.total_apostado || 0),
-        total_pago: parseFloat(row.total_pago || 0),
-        taxa_coletada: parseFloat(row.taxa_coletada || 0),
-        lucro_liquido: parseFloat(row.lucro_liquido || 0)
-      };
-    });
-
-    res.json({
-      total_apostado: entrada,
-      total_pago: saida,
-      spread_retido: entrada - saida,
-      taxa_coletada: parseFloat(taxaColetada.rows[0].total),
-      total_depositado: parseFloat(depositos.rows[0].total),
-      casa: {
-        receita_bruta: entrada - saida,
-        taxa_coletada: parseFloat(taxaColetada.rows[0].total),
-        spread_retido: entrada - saida,
-        total_depositado: parseFloat(depositos.rows[0].total)
-      },
-      usuarios_reais: segmentMap.real,
-      usuarios_artificiais: segmentMap.artificial,
-      por_status: porStatus.rows,
-      por_mercado: porMercado.rows
-    });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-router.post('/markets', async (req, res) => {
-  try {
-    const { title, category, ends_at, description, image_url } = req.body;
-
-    if (!title || !ends_at) {
-      return res.status(400).json({ error: 'titulo e ends_at obrigatorios' });
-    }
-
-    const result = await pool.query(
-      `INSERT INTO markets (title, category, ends_at, description, image_url, q_yes, q_no, b, status)
-       VALUES ($1, $2, $3, $4, $5, 100, 100, 100, 'open')
-       RETURNING *`,
-      [title, category || 'politica', ends_at, description || null, image_url || null]
-    );
-
-    res.json(result.rows[0]);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-router.post('/markets/:id/reset', async (req, res) => {
-  try {
-    const { q_yes, q_no, volume } = req.body;
-
-    if (!q_yes || !q_no) {
-      return res.status(400).json({ error: 'q_yes e q_no obrigatorios' });
-    }
-
-    await pool.query(
-      'UPDATE markets SET q_yes = $1, q_no = $2, volume = COALESCE($3, volume) WHERE id = $4',
-      [q_yes, q_no, volume || null, req.params.id]
-    );
-
-    const total = parseFloat(q_yes) + parseFloat(q_no);
-    const probYes = ((parseFloat(q_yes) / total) * 100).toFixed(2);
-    const probNo = ((parseFloat(q_no) / total) * 100).toFixed(2);
-
-    await pool.query(
-      'INSERT INTO market_history (market_id, prob_yes, prob_no, volume) VALUES ($1, $2, $3, $4)',
-      [req.params.id, probYes, probNo, volume || 0]
-    );
-
-    res.json({ ok: true, prob_yes: probYes, prob_no: probNo });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-router.post('/markets/:id/update-date', async (req, res) => {
-  try {
-    const { ends_at } = req.body;
-    if (!ends_at) return res.status(400).json({ error: 'ends_at required' });
-    await pool.query('UPDATE markets SET ends_at = $1 WHERE id = $2', [ends_at, req.params.id]);
-    res.json({ ok: true });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-router.post('/markets/curate', async (req, res) => {
-  try {
-    const markets = await pool.query(
-      'SELECT id, title FROM markets WHERE resolved_at IS NULL ORDER BY created_at DESC'
-    );
-
-    const updated = [];
-    const skipped = [];
-
-    for (const market of markets.rows) {
-      const rule = MARKET_CURATION_RULES.find((entry) => entry.match.test(market.title));
-      if (!rule) {
-        skipped.push({ id: market.id, title: market.title, reason: 'sem regra mapeada' });
-        continue;
-      }
-
-      await pool.query(
-        'UPDATE markets SET description = $1, ends_at = $2 WHERE id = $3',
-        [rule.description, rule.ends_at, market.id]
-      );
-
-      updated.push({ id: market.id, title: market.title, ends_at: rule.ends_at });
-    }
-
-    res.json({
-      ok: true,
-      updated_count: updated.length,
-      skipped_count: skipped.length,
-      updated,
-      skipped
-    });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// ── CLEANUP CORRUPTED HISTORY DATA ────────────────────────────────────────────
-router.post('/markets/cleanup-history', async (req, res) => {
-  try {
-    // Remove entries where prob_yes is extremely low or extremely high (corrupted by type coercion bug)
-    const result = await pool.query(`
-      DELETE FROM market_history
-      WHERE CAST(prob_yes AS NUMERIC) < 5 OR CAST(prob_yes AS NUMERIC) > 95
-    `);
-    res.json({ ok: true, deleted: result.rowCount });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-router.post('/markets/sync-volume', async (req, res) => {
-  try {
-    await pool.query(`
-      UPDATE markets m
-      SET volume = (
-        SELECT COALESCE(SUM(b.amount), 0)
-        FROM bets b
-        WHERE b.market_id = m.id
-      )
-    `);
-    res.json({ ok: true });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-router.post('/markets/:id/history-seed', async (req, res) => {
-  try {
-    const { points } = req.body;
-    if (!Array.isArray(points)) {
-      return res.status(400).json({ error: 'points array required' });
-    }
-
-    let inserted = 0;
-    for (const point of points) {
-      const interval = `${point.days_ago || 0} days ${point.hours_ago || 0} hours`;
-      await pool.query(
-        `INSERT INTO market_history (market_id, prob_yes, prob_no, volume, created_at)
-         VALUES ($1, $2, $3, $4, NOW() - INTERVAL '${interval}')`,
-        [req.params.id, point.prob_yes, point.prob_no, point.volume]
-      );
-      inserted += 1;
-    }
-
-    res.json({ ok: true, inserted });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
 router.get('/withdrawals', async (req, res) => {
   try {
     const result = await pool.query(`
@@ -585,10 +327,26 @@ router.get('/withdrawals', async (req, res) => {
 
 router.post('/withdrawals/:id/pay', async (req, res) => {
   try {
-    await pool.query('UPDATE withdrawals SET status = $1 WHERE id = $2', [
-      'paid',
-      req.params.id
-    ]);
+    const { id } = req.params;
+    await pool.query('UPDATE withdrawals SET status = $1 WHERE id = $2', ['paid', id]);
+
+    const withdrawal = await pool.query(
+      'SELECT w.*, u.email, u.username FROM withdrawals w JOIN users u ON u.id = w.user_id WHERE w.id = $1',
+      [id]
+    );
+
+    if (withdrawal.rows.length) {
+      const { sendEmail } = require('../lib/email');
+      const { APP_BRAND } = require('../lib/appConfig');
+      const w = withdrawal.rows[0];
+      await sendEmail(
+        w.email,
+        `Saque Realizado — ${APP_BRAND}`,
+        `<h1>Parabens, ${w.username}!</h1>
+         <p>Seu saque de <strong>R${parseFloat(w.amount).toFixed(2)}</strong> foi processado e pago para a chave PIX informada.</p>
+         <p>Obrigado por utilizar a ${APP_BRAND}.</p>`
+      );
+    }
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -597,29 +355,45 @@ router.post('/withdrawals/:id/pay', async (req, res) => {
 
 router.post('/withdrawals/:id/cancel', async (req, res) => {
   try {
-    const withdrawal = await pool.query(
-      'SELECT * FROM withdrawals WHERE id = $1',
-      [req.params.id]
-    );
+    const { id } = req.params;
+    const withdrawal = await pool.query('SELECT * FROM withdrawals WHERE id = $1', [id]);
 
     if (!withdrawal.rows.length) {
       return res.status(404).json({ error: 'Saque nao encontrado' });
     }
-
     if (withdrawal.rows[0].status !== 'pending') {
       return res.status(400).json({ error: 'Saque ja processado' });
     }
 
-    await pool.query('UPDATE withdrawals SET status = $1 WHERE id = $2', [
-      'cancelled',
-      req.params.id
-    ]);
+    await pool.query('UPDATE withdrawals SET status = $1 WHERE id = $2', ['cancelled', id]);
     await pool.query(
       'UPDATE users SET balance = balance + $1 WHERE id = $2',
       [withdrawal.rows[0].amount, withdrawal.rows[0].user_id]
     );
 
+    const user = await pool.query('SELECT email, username FROM users WHERE id = $1', [withdrawal.rows[0].user_id]);
+    if (user.rows.length) {
+      const { sendEmail } = require('../lib/email');
+      const { APP_BRAND } = require('../lib/appConfig');
+      const w = withdrawal.rows[0];
+      await sendEmail(
+        user.rows[0].email,
+        `Saque Cancelado — ${APP_BRAND}`,
+        `<h1>Ola, ${user.rows[0].username}!</h1>
+         <p>Seu pedido de saque de <strong>R${parseFloat(w.amount).toFixed(2)}</strong> foi cancelado pela nossa equipe.</p>
+         <p>O valor ja foi estornado integralmente para o seu saldo na plataforma.</p>`
+      );
+    }
     res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.get('/users', async (req, res) => {
+  try {
+    const result = await pool.query('SELECT id, username, email, balance, created_at, is_bot FROM users ORDER BY created_at DESC');
+    res.json(result.rows);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
