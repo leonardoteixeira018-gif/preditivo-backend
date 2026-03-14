@@ -1,0 +1,6 @@
+{
+  "rewrites": [
+    { "source": "/market/:id", "destination": "/market.html" },
+    { "source": "/profile", "destination": "/profile.html" }
+  ]
+}

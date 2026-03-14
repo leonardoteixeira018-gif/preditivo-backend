@@ -1,0 +1,964 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<title>Bubuya — Admin</title>
+<meta name="robots" content="noindex,nofollow">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body { font-family:'Segoe UI',sans-serif; background:#080c10; color:#e8edf2; min-height:100vh; }
+.login-screen { min-height:100vh; display:flex; align-items:center; justify-content:center; }
+.login-card { background:#0e1419; border:1px solid rgba(255,255,255,0.07); border-radius:16px; padding:40px; width:360px; text-align:center; }
+.login-card h2 { margin-bottom:8px; color:#fff; }
+.login-card p { color:#5a6878; margin-bottom:24px; font-size:0.9rem; }
+.input { width:100%; background:#141c24; border:1px solid rgba(255,255,255,0.07); border-radius:8px; padding:12px; color:#e8edf2; font-family:inherit; font-size:0.95rem; outline:none; margin-bottom:12px; }
+.input:focus { border-color:#00e676; }
+.btn-primary { width:100%; padding:13px; background:#00e676; color:#080c10; font-weight:700; border:none; border-radius:8px; cursor:pointer; font-size:1rem; font-family:inherit; }
+.header { background:#0e1419; border-bottom:1px solid rgba(255,255,255,0.07); padding:0 32px; display:flex; align-items:center; height:60px; gap:16px; }
+.logo { font-weight:700; color:#00e676; font-size:1.1rem; }
+.stat-pills { display:flex; gap:8px; margin-left:auto; }
+.stat-pill { background:#141c24; border:1px solid rgba(255,255,255,0.07); border-radius:8px; padding:6px 14px; font-size:0.8rem; color:#5a6878; }
+.stat-pill span { color:#e8edf2; font-weight:600; margin-left:4px; }
+.btn-logout { padding:7px 16px; background:transparent; border:1px solid rgba(255,255,255,0.1); border-radius:8px; color:#5a6878; cursor:pointer; font-family:inherit; font-size:0.85rem; }
+.container { max-width:1100px; margin:0 auto; padding:32px 24px; }
+.tabs { display:flex; gap:8px; margin-bottom:24px; flex-wrap:wrap; }
+.tab { padding:8px 20px; background:transparent; border:1px solid rgba(255,255,255,0.07); border-radius:8px; color:#5a6878; cursor:pointer; font-family:inherit; font-size:0.9rem; transition:all 0.2s; }
+.tab:hover { color:#e8edf2; }
+.tab.active { background:rgba(0,230,118,0.1); border-color:#00e676; color:#00e676; }
+.section { display:none; }
+.section.active { display:block; }
+.section-title { font-size:1.1rem; font-weight:600; margin-bottom:16px; display:flex; align-items:center; gap:8px; }
+.badge { background:#ff4757; color:#fff; border-radius:100px; padding:2px 8px; font-size:0.75rem; }
+table { width:100%; border-collapse:collapse; }
+th { text-align:left; padding:10px 12px; font-size:0.75rem; text-transform:uppercase; letter-spacing:1px; color:#5a6878; border-bottom:1px solid rgba(255,255,255,0.07); }
+td { padding:12px; font-size:0.9rem; border-bottom:1px solid rgba(255,255,255,0.04); vertical-align:middle; }
+tr:hover td { background:rgba(255,255,255,0.02); }
+.btn { padding:7px 16px; border:none; border-radius:6px; cursor:pointer; font-family:inherit; font-size:0.85rem; font-weight:600; background:#141c24; color:#e8edf2; transition:all 0.2s; }
+.btn:hover { opacity:0.85; }
+.btn-green { background:rgba(0,230,118,0.15); color:#00e676; border:1px solid rgba(0,230,118,0.3); }
+.btn-resolve { background:rgba(0,180,255,0.15); color:#00b4ff; border:1px solid rgba(0,180,255,0.3); }
+.btn-confirm { background:rgba(0,230,118,0.15); color:#00e676; border:1px solid rgba(0,230,118,0.3); }
+.btn-reject { background:rgba(255,71,87,0.15); color:#ff4757; border:1px solid rgba(255,71,87,0.3); }
+.modal-overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,0.8); backdrop-filter:blur(8px); z-index:100; align-items:center; justify-content:center; }
+.modal-overlay.active { display:flex; }
+.modal { background:#0e1419; border:1px solid rgba(255,255,255,0.1); border-radius:16px; padding:32px; width:90%; max-width:440px; }
+.modal h3 { margin-bottom:16px; }
+.btn-yes { width:100%; padding:13px; background:rgba(0,230,118,0.15); color:#00e676; border:1px solid rgba(0,230,118,0.3); border-radius:8px; cursor:pointer; font-family:inherit; font-weight:700; font-size:1rem; margin-bottom:8px; }
+.btn-no { width:100%; padding:13px; background:rgba(255,71,87,0.15); color:#ff4757; border:1px solid rgba(255,71,87,0.3); border-radius:8px; cursor:pointer; font-family:inherit; font-weight:700; font-size:1rem; margin-bottom:8px; }
+.btn-cancel { width:100%; padding:11px; background:transparent; color:#5a6878; border:1px solid rgba(255,255,255,0.07); border-radius:8px; cursor:pointer; font-family:inherit; font-size:0.95rem; margin-top:4px; }
+.receita-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:16px; margin-bottom:32px; }
+.receita-card { background:#0e1419; border:1px solid rgba(255,255,255,0.07); border-radius:12px; padding:20px; }
+.receita-label { font-size:0.75rem; color:#5a6878; text-transform:uppercase; letter-spacing:1px; margin-bottom:8px; }
+.receita-val { font-size:1.4rem; font-weight:700; }
+.toast { position:fixed; bottom:24px; right:24px; background:#1a2535; border:1px solid rgba(255,255,255,0.1); border-radius:10px; padding:12px 20px; font-size:0.9rem; z-index:200; opacity:0; transition:opacity 0.3s; pointer-events:none; }
+.toast.show { opacity:1; }
+.form-group { margin-bottom:16px; }
+.form-label { display:block; font-size:0.8rem; color:#5a6878; margin-bottom:6px; text-transform:uppercase; letter-spacing:1px; }
+.form-input { width:100%; background:#141c24; border:1px solid rgba(255,255,255,0.07); border-radius:8px; padding:12px; color:#e8edf2; font-family:inherit; font-size:0.95rem; outline:none; }
+.form-input:focus { border-color:#00e676; }
+.form-textarea { width:100%; background:#141c24; border:1px solid rgba(255,255,255,0.07); border-radius:8px; padding:12px; color:#e8edf2; font-family:inherit; font-size:0.9rem; resize:vertical; min-height:100px; outline:none; }
+.form-textarea:focus { border-color:#00e676; }
+.form-select { width:100%; background:#141c24; border:1px solid rgba(255,255,255,0.07); border-radius:8px; padding:12px; color:#e8edf2; font-family:inherit; font-size:0.95rem; outline:none; }
+.form-grid { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+.info-box { background:#141c24; border:1px solid rgba(255,255,255,0.07); border-radius:10px; padding:16px; margin-bottom:20px; font-size:0.85rem; color:#5a6878; line-height:1.7; }
+.info-box strong { color:#e8edf2; }
+.bot-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:16px; margin-bottom:24px; }
+.bot-card { background:#0e1419; border:1px solid rgba(255,255,255,0.07); border-radius:12px; padding:20px; }
+.bot-label { font-size:0.75rem; color:#5a6878; text-transform:uppercase; letter-spacing:1px; margin-bottom:8px; }
+.bot-val { font-size:1.4rem; font-weight:700; }
+.bot-status-on { display:inline-block; background:rgba(0,230,118,0.15); color:#00e676; border:1px solid rgba(0,230,118,0.3); border-radius:6px; padding:3px 10px; font-size:0.8rem; font-weight:600; }
+.bot-status-off { display:inline-block; background:rgba(255,71,87,0.15); color:#ff4757; border:1px solid rgba(255,71,87,0.3); border-radius:6px; padding:3px 10px; font-size:0.8rem; font-weight:600; }
+.chart-box { background:#0e1419; border:1px solid rgba(255,255,255,0.07); border-radius:12px; padding:20px; margin-bottom:24px; position:relative; height:260px; }
+.simulate-row { display:flex; gap:10px; align-items:center; margin-bottom:24px; flex-wrap:wrap; }
+.simulate-row input { background:#141c24; border:1px solid rgba(255,255,255,0.07); border-radius:8px; padding:10px 14px; color:#e8edf2; font-family:inherit; font-size:0.95rem; outline:none; width:120px; }
+.simulate-row input:focus { border-color:#00e676; }
+#botSimResult { font-size:0.85rem; color:#5a6878; }
+</style>
+</head>
+<body>
+
+<!-- LOGIN -->
+<div id="loginScreen" class="login-screen">
+  <div class="login-card">
+    <h2>Preditivo Admin</h2>
+    <p>Acesso restrito</p>
+    <input id="adminPass" class="input" type="password" placeholder="Senha admin" onkeydown="if(event.key==='Enter')adminLogin()">
+    <button class="btn-primary" onclick="adminLogin()">Entrar</button>
+  </div>
+</div>
+
+<!-- DASHBOARD -->
+<div id="dashboard" style="display:none">
+  <div class="header">
+    <div class="logo">Preditivo Admin</div>
+    <div class="stat-pills">
+      <div class="stat-pill">Depositos pendentes <span id="statDep">-</span></div>
+      <div class="stat-pill">Usuarios <span id="statUsers">-</span></div>
+      <div class="stat-pill">Apostas abertas <span id="statBets">-</span></div>
+    </div>
+    <button class="btn-logout" onclick="logout()">Sair</button>
+  </div>
+
+  <div class="container">
+    <div class="tabs">
+      <button class="tab active" onclick="switchTab('deposits',this)">Depositos</button>
+      <button class="tab" onclick="switchTab('markets',this)">Mercados</button>
+      <button class="tab" onclick="switchTab('users',this)">Usuarios</button>
+      <button class="tab" onclick="switchTab('receita',this)">Receita</button>
+      <button class="tab" onclick="switchTab('novo',this)">+ Novo Mercado</button>
+      <button class="tab" onclick="switchTab('saques',this)">Saques</button>
+      <button class="tab" onclick="switchTab('bots',this)">🤖 Bots</button>
+    </div>
+
+    <!-- DEPOSITOS -->
+    <div id="sec-deposits" class="section active">
+      <div class="section-title">Depositos Pendentes <span class="badge" id="pendingCount">0</span></div>
+      <table>
+        <thead><tr><th>Codigo</th><th>Usuario</th><th>Valor</th><th>Horario</th><th>Status</th><th>Acoes</th></tr></thead>
+        <tbody id="depositsTbody"><tr><td colspan="6" style="text-align:center;padding:40px;color:#5a6878">Carregando...</td></tr></tbody>
+      </table>
+    </div>
+
+    <!-- MERCADOS -->
+    <div id="sec-markets" class="section">
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:16px">
+        <div class="section-title" style="margin-bottom:0">Mercados</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn btn-resolve" onclick="curateOpenMarkets()">Ajustar regras & datas</button>
+          <button class="btn btn-green" onclick="seedTechBrasil()">🇧🇷 Seed Tech Brasil</button>
+          <button class="btn btn-green" onclick="seedTechGlobal()">🌐 Seed Tech Global</button>
+        </div>
+      </div>
+      <table>
+        <thead><tr><th>Titulo</th><th>Categoria</th><th>Prob SIM/NAO</th><th>Volume</th><th>Encerra</th><th>Acoes</th></tr></thead>
+        <tbody id="marketsTbody"><tr><td colspan="6" style="text-align:center;padding:40px;color:#5a6878">Carregando...</td></tr></tbody>
+      </table>
+    </div>
+
+    <!-- USUARIOS -->
+    <div id="sec-users" class="section">
+      <div class="section-title">Usuarios</div>
+      <table>
+        <thead><tr><th>Nome</th><th>Email</th><th>Saldo</th><th>Bonus Locked</th><th>Apostas Bonus</th><th>Cadastro</th><th>Acao</th></tr></thead>
+        <tbody id="usersTbody"><tr><td colspan="7" style="text-align:center;padding:40px;color:#5a6878">Carregando...</td></tr></tbody>
+      </table>
+    </div>
+
+    <!-- RECEITA -->
+    <div id="sec-receita" class="section">
+      <div class="section-title">Receita da Casa</div>
+      <div id="receitaContent">Carregando...</div>
+    </div>
+
+    <!-- SAQUES -->
+    <div id="sec-saques" class="section">
+      <div class="section-title">Saques Pendentes <span class="badge" id="saquesCount">0</span></div>
+      <table>
+        <thead><tr><th>Usuario</th><th>Valor</th><th>Chave PIX</th><th>Tipo</th><th>Solicitado</th><th>Status</th><th>Acao</th></tr></thead>
+        <tbody id="saquesTbody"><tr><td colspan="7" style="text-align:center;padding:40px;color:#5a6878">Carregando...</td></tr></tbody>
+      </table>
+    </div>
+
+    <!-- BOTS -->
+    <div id="sec-bots" class="section">
+      <div class="section-title">🤖 Monitor de Bots</div>
+
+      <div class="bot-grid" id="botStatsGrid">
+        <div class="bot-card"><div class="bot-label">Status Automático</div><div id="botStatusBadge" style="margin-top:4px">—</div></div>
+        <div class="bot-card"><div class="bot-label">Total de apostas</div><div class="bot-val" id="botTotalBets" style="color:#00b4ff">—</div></div>
+        <div class="bot-card"><div class="bot-label">Volume total</div><div class="bot-val" id="botTotalVol" style="color:#00e676">—</div></div>
+        <div class="bot-card"><div class="bot-label">Apostas hoje (24h)</div><div class="bot-val" id="botTodayBets" style="color:#ffc107">—</div></div>
+        <div class="bot-card"><div class="bot-label">Volume hoje (24h)</div><div class="bot-val" id="botTodayVol" style="color:#ffc107">—</div></div>
+      </div>
+
+      <div style="display:flex;gap:10px;margin-bottom:24px;flex-wrap:wrap">
+        <button class="btn btn-green" onclick="enableBot()">▶ Ativar bot automático</button>
+        <button class="btn btn-reject" onclick="disableBot()">⏹ Desativar bot automático</button>
+      </div>
+
+      <div class="section-title" style="font-size:0.95rem">Simular apostas agora</div>
+      <div class="simulate-row">
+        <input id="simRounds" type="number" value="50" min="1" max="500" placeholder="Rounds">
+        <button class="btn btn-green" onclick="runTechSimulation()">Simular Tech</button>
+        <button class="btn btn-resolve" onclick="runSimulation()">🎲 Simular</button>
+        <span id="botSimResult"></span>
+      </div>
+
+      <div class="section-title" style="font-size:0.95rem;margin-bottom:12px">Atividade por hora (últimas 48h)</div>
+      <div class="chart-box"><canvas id="botActivityChart"></canvas></div>
+
+      <div class="section-title" style="font-size:0.95rem;margin-bottom:12px">Reação dos mercados</div>
+      <table>
+        <thead><tr><th>Mercado</th><th>Categoria</th><th>Apostas Bots</th><th>Volume Bots</th><th>Prob SIM atual</th></tr></thead>
+        <tbody id="botMarketsTbody"><tr><td colspan="5" style="text-align:center;padding:30px;color:#5a6878">Carregando...</td></tr></tbody>
+      </table>
+
+      <div class="section-title" style="font-size:0.95rem;margin-top:24px;margin-bottom:12px">Saldo dos bots</div>
+      <table>
+        <thead><tr><th>Bot</th><th>Saldo</th></tr></thead>
+        <tbody id="botBalancesTbody"><tr><td colspan="2" style="text-align:center;padding:20px;color:#5a6878">Carregando...</td></tr></tbody>
+      </table>
+
+      <!-- GESTÃO DE BOTS -->
+      <div class="section-title" style="font-size:0.95rem;margin-top:32px;margin-bottom:12px">💰 Gestão de Bots</div>
+      <div style="background:#0e1419;border:1px solid rgba(255,255,255,0.07);border-radius:12px;padding:20px;max-width:480px">
+        <p style="color:#5a6878;font-size:0.85rem;margin-bottom:16px">Define o saldo de todos os usuários bots (emails que terminam em @bot.com), exceto txotta.</p>
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+          <label style="font-size:0.9rem;color:#5a6878;flex-shrink:0">Saldo (R$):</label>
+          <input id="botReloadAmount" type="number" value="999999" min="0" step="1000"
+            style="background:#141c24;border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:9px 14px;color:#e8edf2;font-size:0.95rem;width:160px;outline:none;font-family:inherit">
+          <button class="btn btn-green" onclick="reloadAllBotBalances()" id="botReloadBtn">
+            Recarregar Saldo de Todos os Bots
+          </button>
+        </div>
+        <div id="botReloadStatus" style="margin-top:12px;font-size:0.85rem;color:#5a6878"></div>
+      </div>
+    </div>
+
+    <!-- NOVO MERCADO -->
+    <div id="sec-novo" class="section">
+      <div class="section-title">Criar Novo Mercado</div>
+      <div style="max-width:600px">
+        <div class="form-group">
+          <label class="form-label">Titulo</label>
+          <input id="nm-title" class="form-input" type="text" placeholder="Ex: Lula vence as eleicoes de 2026?">
+        </div>
+        <div class="form-grid" style="margin-bottom:16px">
+          <div class="form-group" style="margin-bottom:0">
+            <label class="form-label">Categoria</label>
+            <select id="nm-cat" class="form-select">
+              <option value="politica">Politica</option>
+              <option value="economia">Economia</option>
+              <option value="futebol">Futebol</option>
+              <option value="tech">Tech</option>
+            </select>
+          </div>
+          <div class="form-group" style="margin-bottom:0">
+            <label class="form-label">Data de encerramento</label>
+            <input id="nm-date" class="form-input" type="date">
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Regras de resolucao</label>
+          <textarea id="nm-desc" class="form-textarea" placeholder="Descreva como este mercado sera resolvido..."></textarea>
+        </div>
+        <div class="form-group">
+          <label class="form-label">URL da Foto (opcional)</label>
+          <input id="nm-image" class="form-input" type="url" placeholder="Ex: https://.../foto-do-mercado.jpg">
+        </div>
+        <div class="info-box">
+          <strong>Probabilidade inicial:</strong> 50% SIM / 50% NAO<br>
+          <strong>Liquidez inicial:</strong> R$100 automatico<br>
+          O mercado fica visivel imediatamente apos criar.
+        </div>
+        <button class="btn" style="background:#00e676;color:#080c10;font-weight:700;font-size:1rem;padding:14px 32px" onclick="criarMercado()">Criar Mercado</button>
+        <div id="nm-feedback" style="margin-top:12px;font-size:0.85rem"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL RESOLVER -->
+<div id="resolveModal" class="modal-overlay">
+  <div class="modal">
+    <h3>Resolver Mercado</h3>
+    <p id="resolveMarketTitle" style="color:#5a6878;margin-bottom:16px;font-size:0.9rem"></p>
+    <button class="btn-yes" onclick="confirmResolve('yes')">SIM — Aconteceu</button>
+    <button class="btn-no" onclick="confirmResolve('no')">NAO — Nao aconteceu</button>
+    <button class="btn-cancel" onclick="closeModal('resolveModal')">Cancelar</button>
+  </div>
+</div>
+
+<!-- MODAL EDITAR FOTO -->
+<div id="imageModal" class="modal-overlay">
+  <div class="modal">
+    <h3>Editar Foto</h3>
+    <p style="color:#5a6878;font-size:0.85rem;margin-bottom:12px">Substitua ou adicione a URL da imagem para este mercado.</p>
+    <input id="imageText" class="form-input" type="url" placeholder="Ex: https://.../minha-foto.jpg" style="margin-bottom:12px">
+    <div style="display:flex;gap:8px">
+      <button class="btn" style="flex:1;background:#00b4ff;color:#080c10;font-weight:700" onclick="saveImage()">Salvar Foto</button>
+      <button class="btn-cancel" style="flex:1;margin-top:0" onclick="closeModal('imageModal')">Cancelar</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL DESCRICAO -->
+<div id="descModal" class="modal-overlay">
+  <div class="modal">
+    <h3>Regras de resolucao</h3>
+    <p style="color:#5a6878;font-size:0.85rem;margin-bottom:12px">Descreva como este mercado sera resolvido.</p>
+    <textarea id="descText" class="form-textarea" style="margin-bottom:12px" placeholder="Ex: Sera resolvido como SIM se..."></textarea>
+    <div style="display:flex;gap:8px">
+      <button class="btn" style="flex:1;background:#00e676;color:#080c10;font-weight:700" onclick="saveDesc()">Salvar</button>
+      <button class="btn-cancel" style="flex:1;margin-top:0" onclick="closeModal('descModal')">Cancelar</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL AJUSTAR SALDO -->
+<div id="balanceModal" class="modal-overlay">
+  <div class="modal">
+    <h3>Ajustar Saldo</h3>
+    <p id="balanceUserName" style="color:#5a6878;margin-bottom:8px;font-size:0.9rem"></p>
+    <p style="color:#5a6878;font-size:0.8rem;margin-bottom:16px">Digite o valor a <strong style="color:#00e676">adicionar</strong> ao saldo atual. Use número negativo para remover.</p>
+    <input id="balanceVal" class="form-input" type="number" placeholder="Ex: 100 para adicionar, -50 para remover" style="margin-bottom:12px">
+    <div style="display:flex;gap:8px">
+      <button class="btn" style="flex:1;background:#00e676;color:#080c10;font-weight:700" onclick="saveBalance()">Salvar</button>
+      <button class="btn-cancel" style="flex:1;margin-top:0" onclick="closeModal('balanceModal')">Cancelar</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast" class="toast"></div>
+
+<script src="./config.js"></script>
+<script src="./admin-enhancements.js"></script>
+<script>
+var API = window.PREDITIVO_CONFIG.API_BASE;
+var ADMIN_SECRET = '';
+var resolveMarketId = null;
+var descMarketId = null;
+var balanceUserId = null;
+var allDeposits = [];
+var reopenMarketId = null;
+var botActivityChart = null;
+
+function adminHeaders() {
+  return { 'Content-Type': 'application/json', 'x-admin-secret': ADMIN_SECRET };
+}
+
+function adminLogin() {
+  var pass = document.getElementById('adminPass').value;
+  if (!pass) { showToast('Digite a senha'); return; }
+  // Testa o secret no backend antes de liberar o painel
+  fetch(API + '/admin/deposits', { headers: { 'x-admin-secret': pass } })
+    .then(function(r) {
+      if (r.status === 403) { showToast('Senha incorreta'); return; }
+      ADMIN_SECRET = pass;
+      document.getElementById('loginScreen').style.display = 'none';
+      document.getElementById('dashboard').style.display = 'block';
+      loadAll();
+    })
+    .catch(function() { showToast('Erro de conexão'); });
+}
+
+function logout() {
+  document.getElementById('loginScreen').style.display = 'flex';
+  document.getElementById('dashboard').style.display = 'none';
+}
+
+function switchTab(name, el) {
+  document.querySelectorAll('.tab').forEach(function(t){ t.classList.remove('active'); });
+  document.querySelectorAll('.section').forEach(function(s){ s.classList.remove('active'); });
+  el.classList.add('active');
+  document.getElementById('sec-' + name).classList.add('active');
+  if (name === 'deposits') loadDeposits();
+  if (name === 'markets') loadMarkets();
+  if (name === 'users') loadUsers();
+  if (name === 'receita') loadReceita();
+  if (name === 'saques') loadSaques();
+  if (name === 'bots') loadBotStats();
+}
+
+function openModal(id) { document.getElementById(id).classList.add('active'); }
+function closeModal(id) { document.getElementById(id).classList.remove('active'); }
+
+function showToast(msg) {
+  var t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(function(){ t.classList.remove('show'); }, 3000);
+}
+
+function loadAll() {
+  loadDeposits();
+  loadStats();
+}
+
+function loadStats() {
+  fetch(API + '/admin/users', { headers: adminHeaders() }).then(function(r){ return r.json(); }).then(function(data){
+    document.getElementById('statUsers').textContent = data.length || 0;
+  }).catch(function(){});
+  fetch(API + '/admin/deposits', { headers: adminHeaders() }).then(function(r){ return r.json(); }).then(function(data){
+    var pending = data.filter(function(d){ return d.status === 'pending'; }).length;
+    document.getElementById('statDep').textContent = pending;
+    document.getElementById('pendingCount').textContent = pending;
+  }).catch(function(){});
+}
+
+function loadDeposits() {
+  fetch(API + '/admin/deposits', { headers: adminHeaders() })
+    .then(function(r){ return r.json(); })
+    .then(function(data) {
+      allDeposits = data;
+      var pending = data.filter(function(d){ return d.status === 'pending'; });
+      document.getElementById('pendingCount').textContent = pending.length;
+      var tbody = document.getElementById('depositsTbody');
+      if (!data.length) {
+        tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:40px;color:#5a6878">Nenhum deposito</td></tr>';
+        return;
+      }
+      tbody.innerHTML = data.map(function(d) {
+        var dt = new Date(d.created_at).toLocaleString('pt-BR');
+        var statusColor = d.status === 'pending' ? '#ffc107' : d.status === 'confirmed' ? '#00e676' : '#ff4757';
+        var actions = d.status === 'pending'
+          ? '<button class="btn btn-confirm" onclick="confirmDeposit(\'' + d.id + '\')">Confirmar</button> <button class="btn btn-reject" style="margin-left:4px" onclick="rejectDeposit(\'' + d.id + '\')">Rejeitar</button>'
+          : '<span style="color:#5a6878;font-size:0.8rem">' + d.status + '</span>';
+        var isUsdc = d.method === 'usdc';
+        var codeCell = isUsdc
+          ? '<span style="background:rgba(0,180,255,0.15);color:#00b4ff;border-radius:4px;padding:2px 7px;font-size:0.75rem;margin-right:6px">USDC</span>' +
+            '<a href="https://polygonscan.com/tx/' + d.code + '" target="_blank" style="color:#00b4ff;font-family:monospace;font-size:0.75rem">' + (d.code || '').substring(0,18) + '…</a>'
+          : '<span style="background:rgba(0,230,118,0.1);color:#00e676;border-radius:4px;padding:2px 7px;font-size:0.75rem;margin-right:6px">PIX</span>' +
+            '<span style="font-family:monospace;font-size:0.85rem">' + (d.code || '-') + '</span>';
+        return '<tr>' +
+          '<td>' + codeCell + '</td>' +
+          '<td>' + (d.username || '-') + '</td>' +
+          '<td style="color:#00e676;font-weight:600">' + (isUsdc ? '' : 'R$') + parseFloat(d.amount).toFixed(2) + (isUsdc ? ' USDC' : '') + '</td>' +
+          '<td style="color:#5a6878;font-size:0.8rem">' + dt + '</td>' +
+          '<td><span style="color:' + statusColor + '">' + d.status + '</span></td>' +
+          '<td>' + actions + '</td>' +
+          '</tr>';
+      }).join('');
+    }).catch(function(e){ console.error(e); });
+}
+
+// FIX: agora passa user_id e amount no body
+function confirmDeposit(id) {
+  var dep = allDeposits.find(function(d){ return d.id === id; });
+  if (!dep) { showToast('Deposito nao encontrado'); return; }
+  fetch(API + '/admin/deposits/' + id + '/confirm', {
+    method: 'POST',
+    headers: adminHeaders(),
+    body: JSON.stringify({ user_id: dep.user_id, amount: dep.amount })
+  })
+  .then(function(r){ return r.json(); })
+  .then(function(d){
+    if (d.error) { showToast('Erro: ' + d.error); return; }
+    showToast('Deposito confirmado!');
+    loadDeposits();
+    loadStats();
+  })
+  .catch(function(){ showToast('Erro ao confirmar'); });
+}
+
+function rejectDeposit(id) {
+  fetch(API + '/admin/deposits/' + id + '/reject', { method: 'POST', headers: adminHeaders() })
+    .then(function(r){ return r.json(); })
+    .then(function(){ showToast('Deposito rejeitado'); loadDeposits(); })
+    .catch(function(){ showToast('Erro ao rejeitar'); });
+}
+
+function loadMarkets() {
+  fetch(API + '/markets')
+    .then(function(r){ return r.json(); })
+    .then(function(data) {
+      var tbody = document.getElementById('marketsTbody');
+      tbody.innerHTML = data.map(function(m) {
+        var total = parseFloat(m.q_yes || 100) + parseFloat(m.q_no || 100);
+        var pYes = Math.round(parseFloat(m.q_yes || 100) / total * 100);
+        var vol = Math.max(0, total - 200).toFixed(0);
+        var closes = m.ends_at ? new Date(m.ends_at).toLocaleDateString('pt-BR') : '-';
+        var action = m.resolved_at
+          ? '<span style="color:#5a6878;font-size:0.8rem">Resolvido: ' + (m.resolved_outcome || '').toUpperCase() + '</span>' +
+            '<button class="btn" style="margin-top:4px;font-size:0.75rem;background:rgba(255,193,7,0.15);color:#ffc107;border:1px solid rgba(255,193,7,0.3)" onclick="reopenMarket(\'' + m.id + '\',\'' + m.title.substring(0,40).replace(/'/g,'') + '\')">↺ Reabrir</button>'
+          : '<button class="btn btn-resolve" onclick="openResolve(\'' + m.id + '\',\'' + m.title.substring(0, 40).replace(/'/g, '') + '\')">Resolver</button>';
+        var descLabel = (m.description && m.description.length > 0) ? 'Editar regras' : '+ Regras';
+        var descBtn = '<button class="btn btn-green" style="margin-top:4px;font-size:0.75rem" onclick="openDesc(\'' + m.id + '\')">' + descLabel + '</button>';
+        var imgBtn = '<button class="btn" style="margin-top:4px;font-size:0.75rem;background:rgba(0,180,255,0.15);color:#00b4ff;border:1px solid rgba(0,180,255,0.3)" onclick="openImageEdit(\'' + m.id + '\', \'' + (m.image_url || '') + '\')">🖼 Foto</button>';
+        return '<tr>' +
+          '<td style="max-width:280px;font-size:0.85rem">' + m.title + '</td>' +
+          '<td style="color:#5a6878;font-size:0.8rem">' + m.category + '</td>' +
+          '<td><span style="color:#00e676">' + pYes + '%</span> / <span style="color:#ff4757">' + (100 - pYes) + '%</span></td>' +
+          '<td style="color:#ffc107">R$' + vol + '</td>' +
+          '<td style="color:#5a6878;font-size:0.8rem">' + closes + '</td>' +
+          '<td style="display:flex;flex-direction:column;gap:4px;align-items:flex-start">' + action + descBtn + imgBtn + '</td>' +
+          '</tr>';
+      }).join('');
+    }).catch(function(e){ console.error(e); });
+}
+
+function loadUsers() {
+  fetch(API + '/admin/users', { headers: adminHeaders() })
+    .then(function(r){ return r.json(); })
+    .then(function(data) {
+      var tbody = document.getElementById('usersTbody');
+      tbody.innerHTML = data.map(function(u) {
+        var dt = new Date(u.created_at).toLocaleDateString('pt-BR');
+        var balance = parseFloat(u.balance || 0);
+        var locked = parseFloat(u.bonus_locked || 0);
+        var betsCount = u.bonus_bets_count || 0;
+        return '<tr>' +
+          '<td>' + (u.username || u.name || '-') + '</td>' +
+          '<td style="color:#5a6878;font-size:0.85rem">' + u.email + '</td>' +
+          '<td style="color:#00e676;font-weight:600">R$' + balance.toFixed(2) + '</td>' +
+          '<td style="color:#ffc107">' + (locked > 0 ? 'R$' + locked.toFixed(2) : '-') + '</td>' +
+          '<td style="color:#5a6878;text-align:center">' + (locked > 0 ? betsCount + '/3' : '-') + '</td>' +
+          '<td style="color:#5a6878;font-size:0.8rem">' + dt + '</td>' +
+          '<td><button class="btn" onclick="openBalance(\'' + u.id + '\',\'' + (u.username || u.name || '').replace(/'/g, '') + '\',' + balance + ')">Ajustar saldo</button></td>' +
+          '</tr>';
+      }).join('');
+    }).catch(function(e){ console.error(e); });
+}
+
+function loadReceita() {
+  fetch(API + '/admin/receita', { headers: adminHeaders() })
+    .then(function(r){ return r.json(); })
+    .then(function(d) {
+      var html = '<div class="receita-grid">' +
+        '<div class="receita-card"><div class="receita-label">Total Apostado</div><div class="receita-val" style="color:#00b4ff">R$' + parseFloat(d.total_apostado || 0).toFixed(2) + '</div></div>' +
+        '<div class="receita-card"><div class="receita-label">Total Pago em Premios</div><div class="receita-val" style="color:#ff4757">R$' + parseFloat(d.total_pago || 0).toFixed(2) + '</div></div>' +
+        '<div class="receita-card"><div class="receita-label">Taxa 2% Coletada</div><div class="receita-val" style="color:#00e676">R$' + parseFloat(d.taxa_coletada || 0).toFixed(2) + '</div></div>' +
+        '<div class="receita-card"><div class="receita-label">Spread Retido</div><div class="receita-val" style="color:#ffc107">R$' + parseFloat(d.spread_retido || 0).toFixed(2) + '</div></div>' +
+        '<div class="receita-card"><div class="receita-label">Total Depositado</div><div class="receita-val" style="color:#e8edf2">R$' + parseFloat(d.total_depositado || 0).toFixed(2) + '</div></div>' +
+        '</div>';
+      if (d.por_mercado && d.por_mercado.length) {
+        html += '<div class="section-title" style="margin-top:8px">Por Mercado</div>';
+        html += '<table><thead><tr><th>Mercado</th><th>Apostado</th><th>Taxa 2%</th><th>Status</th></tr></thead><tbody>';
+        d.por_mercado.forEach(function(m) {
+          html += '<tr>' +
+            '<td style="font-size:0.85rem">' + m.title + '</td>' +
+            '<td style="color:#00b4ff">R$' + parseFloat(m.total_apostado || 0).toFixed(2) + '</td>' +
+            '<td style="color:#00e676">R$' + parseFloat(m.taxa_coletada || 0).toFixed(2) + '</td>' +
+            '<td style="color:#5a6878;font-size:0.8rem">' + (m.resolved_outcome ? m.resolved_outcome.toUpperCase() : 'Aberto') + '</td>' +
+            '</tr>';
+        });
+        html += '</tbody></table>';
+      }
+      document.getElementById('receitaContent').innerHTML = html;
+    }).catch(function(e){ console.error(e); });
+}
+
+function openResolve(marketId, title) {
+  resolveMarketId = marketId;
+  document.getElementById('resolveMarketTitle').textContent = title || ('Mercado ' + marketId);
+  openModal('resolveModal');
+}
+
+// FIX: agora chama /admin/markets/:id/resolve
+function confirmResolve(outcome) {
+  if (!resolveMarketId) return;
+  fetch(API + '/admin/markets/' + resolveMarketId + '/resolve', {
+    method: 'POST',
+    headers: adminHeaders(),
+    body: JSON.stringify({ outcome: outcome })
+  })
+  .then(function(r){ return r.json(); })
+  .then(function(data) {
+    if (data.error) { showToast('Erro: ' + data.error); return; }
+    closeModal('resolveModal');
+    showToast('Resolvido! ' + (data.resolved || ''));
+    loadMarkets();
+  })
+  .catch(function(){ showToast('Erro ao resolver'); });
+}
+
+function openDesc(marketId) {
+  descMarketId = marketId;
+  fetch(API + '/markets/' + marketId)
+    .then(function(r){ return r.json(); })
+    .then(function(m){
+      document.getElementById('descText').value = m.description || '';
+      openModal('descModal');
+    });
+}
+
+function saveDesc() {
+  if (!descMarketId) return;
+  var desc = document.getElementById('descText').value.trim();
+  fetch(API + '/markets/' + descMarketId + '/description', {
+    method: 'PATCH',
+    headers: adminHeaders(),
+    body: JSON.stringify({ description: desc })
+  })
+  .then(function(){ closeModal('descModal'); showToast('Regras salvas!'); loadMarkets(); })
+  .catch(function(){ showToast('Erro ao salvar'); });
+}
+
+function openBalance(userId, name, balance) {
+  balanceUserId = userId;
+  document.getElementById('balanceUserName').textContent = name + ' — saldo atual: R$' + parseFloat(balance).toFixed(2);
+  document.getElementById('balanceVal').value = '';
+  openModal('balanceModal');
+}
+
+// FIX: passa "amount" (valor a adicionar/remover) em vez de "balance"
+function saveBalance() {
+  if (!balanceUserId) return;
+  var val = parseFloat(document.getElementById('balanceVal').value);
+  if (isNaN(val) || val === 0) { showToast('Informe um valor valido'); return; }
+  fetch(API + '/admin/balance', {
+    method: 'POST',
+    headers: adminHeaders(),
+    body: JSON.stringify({ user_id: balanceUserId, amount: val })
+  })
+  .then(function(r){ return r.json(); })
+  .then(function(d){
+    if (d.error) { showToast('Erro: ' + d.error); return; }
+    closeModal('balanceModal');
+    showToast('Saldo atualizado!');
+    loadUsers();
+  })
+  .catch(function(){ showToast('Erro ao atualizar'); });
+}
+
+var imageMarketId = null;
+function openImageEdit(marketId, currentUrl) {
+  imageMarketId = marketId;
+  document.getElementById('imageText').value = (currentUrl && currentUrl !== 'undefined' && currentUrl !== 'null') ? currentUrl : '';
+  openModal('imageModal');
+}
+
+function saveImage() {
+  if (!imageMarketId) return;
+  var url = document.getElementById('imageText').value.trim();
+  fetch(API + '/markets/' + imageMarketId + '/image', {
+    method: 'PATCH',
+    headers: adminHeaders(),
+    body: JSON.stringify({ image_url: url })
+  })
+  .then(function(r) { return r.json(); })
+  .then(function(d) {
+    if (d.error) { showToast('Erro: ' + d.error); return; }
+    closeModal('imageModal');
+    showToast('Foto salva!');
+    loadMarkets();
+  })
+  .catch(function(){ showToast('Erro ao salvar foto'); });
+}
+
+function loadSaques() {
+  fetch(API + '/admin/withdrawals', { headers: adminHeaders() })
+    .then(function(r){ return r.json(); })
+    .then(function(data) {
+      var pending = data.filter(function(s){ return s.status === 'pending'; }).length;
+      document.getElementById('saquesCount').textContent = pending;
+      var tbody = document.getElementById('saquesTbody');
+      if (!data.length) {
+        tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:40px;color:#5a6878">Nenhum saque</td></tr>';
+        return;
+      }
+      tbody.innerHTML = data.map(function(s) {
+        var dt = new Date(s.created_at).toLocaleString('pt-BR');
+        var statusColor = s.status === 'pending' ? '#ffc107' : s.status === 'paid' ? '#00e676' : '#ff4757';
+        var btnPagar = '<button class="btn btn-confirm" onclick="pagarSaque(this)" data-id="' + s.id + '">Marcar pago</button>';
+        var btnCancelar = '<button class="btn btn-reject" style="margin-left:4px" onclick="cancelarSaque(this)" data-id="' + s.id + '">Cancelar</button>';
+        var action = s.status === 'pending' ? btnPagar + ' ' + btnCancelar : '<span style="color:#5a6878;font-size:0.8rem">' + s.status + '</span>';
+        return '<tr>' +
+          '<td>' + (s.username || '-') + '</td>' +
+          '<td style="color:#00e676;font-weight:600">R$' + parseFloat(s.amount).toFixed(2) + '</td>' +
+          '<td style="font-family:monospace;font-size:0.85rem">' + s.pix_key + '</td>' +
+          '<td style="color:#5a6878;font-size:0.8rem">' + s.pix_key_type + '</td>' +
+          '<td style="color:#5a6878;font-size:0.8rem">' + dt + '</td>' +
+          '<td><span style="color:' + statusColor + '">' + s.status + '</span></td>' +
+          '<td>' + action + '</td>' +
+          '</tr>';
+      }).join('');
+    }).catch(function(e){ console.error(e); });
+}
+
+function pagarSaque(btn) {
+  var id = btn.getAttribute('data-id');
+  fetch(API + '/admin/withdrawals/' + id + '/pay', { method: 'POST', headers: adminHeaders() })
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      if (d.error) { showToast('Erro: ' + d.error); return; }
+      showToast('Saque marcado como pago!');
+      loadSaques();
+    })
+    .catch(function(e){ showToast('Erro: ' + e.message); });
+}
+
+function cancelarSaque(btn) {
+  var id = btn.getAttribute('data-id');
+  if (!confirm('Cancelar saque e devolver saldo ao usuario?')) return;
+  fetch(API + '/admin/withdrawals/' + id + '/cancel', { method: 'POST', headers: adminHeaders() })
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      if (d.error) { showToast('Erro: ' + d.error); return; }
+      showToast('Saque cancelado e saldo devolvido!');
+      loadSaques();
+    })
+    .catch(function(e){ showToast('Erro: ' + e.message); });
+}
+
+// ── REABRIR MERCADO ───────────────────────────────────────────────────────────
+function reopenMarket(id, title) {
+  if (!confirm('Reabrir o mercado "' + title + '"?\n\nIsso vai tornar o mercado ativo novamente. Os pagamentos já realizados NÃO serão estornados (para estornar, use a API manualmente).')) return;
+  fetch(API + '/admin/markets/' + id + '/reopen', {
+    method: 'POST',
+    headers: adminHeaders(),
+    body: JSON.stringify({ revert_payouts: false })
+  })
+  .then(function(r){ return r.json(); })
+  .then(function(d){
+    if (d.error) { showToast('Erro: ' + d.error); return; }
+    showToast('Mercado reaberto!');
+    loadMarkets();
+  })
+  .catch(function(){ showToast('Erro ao reabrir'); });
+}
+
+// ── SEED TECH BRASIL ──────────────────────────────────────────────────────────
+function seedTechBrasil() {
+  if (!confirm('Inserir mercados Tech Brasil (Nubank, MELI, PETR4, VALE3, etc)?\n\nMercados já existentes serão ignorados.')) return;
+  showToast('Criando mercados...');
+  fetch(API + '/admin/seed/tech-brasil', { method: 'POST', headers: adminHeaders() })
+  .then(function(r){ return r.json(); })
+  .then(function(d){
+    if (d.error) { showToast('Erro: ' + d.error); return; }
+    var created = (d.markets || []).filter(function(m){ return m.status === 'criado'; }).length;
+    var skipped = (d.markets || []).filter(function(m){ return m.status !== 'criado'; }).length;
+    showToast(created + ' mercados criados, ' + skipped + ' já existiam.');
+    loadMarkets();
+  })
+  .catch(function(){ showToast('Erro ao criar mercados'); });
+}
+
+function seedTechGlobal() {
+  if (!confirm('Inserir mercados Tech Global (ChatGPT, Bitcoin, TikTok, etc)?\n\nMercados já existentes serão ignorados.')) return;
+  showToast('Criando mercados...');
+  fetch(API + '/admin/seed/tech-markets', { method: 'POST', headers: adminHeaders() })
+  .then(function(r){ return r.json(); })
+  .then(function(d){
+    if (d.error) { showToast('Erro: ' + d.error); return; }
+    var created = (d.markets || []).filter(function(m){ return m.status === 'criado'; }).length;
+    var skipped = (d.markets || []).filter(function(m){ return m.status !== 'criado'; }).length;
+    showToast(created + ' mercados criados, ' + skipped + ' já existiam.');
+    loadMarkets();
+  })
+  .catch(function(){ showToast('Erro ao criar mercados'); });
+}
+
+// ── BOT MONITOR ───────────────────────────────────────────────────────────────
+function loadBotStats() {
+  fetch(API + '/admin/bots/stats', { headers: adminHeaders() })
+  .then(function(r){ return r.json(); })
+  .then(function(d){
+    // Status badge
+    var badge = d.bot_enabled
+      ? '<span class="bot-status-on">● ATIVO</span>'
+      : '<span class="bot-status-off">○ INATIVO</span>';
+    document.getElementById('botStatusBadge').innerHTML = badge;
+
+    // Cards
+    document.getElementById('botTotalBets').textContent = parseInt(d.total.total).toLocaleString('pt-BR');
+    document.getElementById('botTotalVol').textContent = 'R$' + parseFloat(d.total.volume).toLocaleString('pt-BR', {minimumFractionDigits:2, maximumFractionDigits:2});
+    document.getElementById('botTodayBets').textContent = parseInt(d.today.total).toLocaleString('pt-BR');
+    document.getElementById('botTodayVol').textContent = 'R$' + parseFloat(d.today.volume).toLocaleString('pt-BR', {minimumFractionDigits:2, maximumFractionDigits:2});
+
+    // Activity chart
+    renderBotActivityChart(d.activity_by_hour || []);
+
+    // Market reaction table
+    var tbody = document.getElementById('botMarketsTbody');
+    if (!d.market_activity || !d.market_activity.length) {
+      tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:24px;color:#5a6878">Sem atividade ainda</td></tr>';
+    } else {
+      tbody.innerHTML = d.market_activity.map(function(m){
+        return '<tr>' +
+          '<td style="font-size:0.85rem;max-width:280px">' + m.title + '</td>' +
+          '<td style="color:#5a6878;font-size:0.8rem">' + (m.category || '-') + '</td>' +
+          '<td style="color:#00b4ff">' + parseInt(m.bot_bets).toLocaleString('pt-BR') + '</td>' +
+          '<td style="color:#00e676">R$' + parseFloat(m.bot_volume).toLocaleString('pt-BR', {minimumFractionDigits:2, maximumFractionDigits:2}) + '</td>' +
+          '<td><span style="color:#00e676;font-weight:600">' + m.prob_yes + '%</span> SIM</td>' +
+          '</tr>';
+      }).join('');
+    }
+
+    // Bot balances
+    var btbody = document.getElementById('botBalancesTbody');
+    if (!d.bots || !d.bots.length) {
+      btbody.innerHTML = '<tr><td colspan="2" style="text-align:center;padding:20px;color:#5a6878">Nenhum bot criado ainda</td></tr>';
+    } else {
+      btbody.innerHTML = d.bots.map(function(b){
+        var color = parseFloat(b.balance) < 1000 ? '#ff4757' : parseFloat(b.balance) < 10000 ? '#ffc107' : '#00e676';
+        return '<tr><td>' + b.username + '</td>' +
+          '<td style="color:' + color + ';font-weight:600">R$' + parseFloat(b.balance).toLocaleString('pt-BR', {minimumFractionDigits:2, maximumFractionDigits:2}) + '</td>' +
+          '</tr>';
+      }).join('');
+    }
+  })
+  .catch(function(e){ console.error('Bot stats error:', e); showToast('Erro ao carregar stats dos bots'); });
+}
+
+function renderBotActivityChart(data) {
+  var canvas = document.getElementById('botActivityChart');
+  if (!canvas) return;
+  var ctx = canvas.getContext('2d');
+
+  if (botActivityChart) { botActivityChart.destroy(); botActivityChart = null; }
+
+  if (!data.length) {
+    ctx.fillStyle = '#5a6878';
+    ctx.font = '14px Segoe UI';
+    ctx.textAlign = 'center';
+    ctx.fillText('Sem atividade nas últimas 48h', canvas.width / 2, 100);
+    return;
+  }
+
+  var labels = data.map(function(d){
+    var dt = new Date(d.hora);
+    return dt.getHours().toString().padStart(2,'0') + 'h';
+  });
+  var bets = data.map(function(d){ return parseInt(d.apostas); });
+  var vols = data.map(function(d){ return parseFloat(d.volume); });
+
+  botActivityChart = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: labels,
+      datasets: [
+        {
+          label: 'Apostas',
+          data: bets,
+          backgroundColor: 'rgba(0,180,255,0.6)',
+          borderColor: '#00b4ff',
+          borderWidth: 1,
+          yAxisID: 'y'
+        },
+        {
+          label: 'Volume (R$)',
+          data: vols,
+          type: 'line',
+          borderColor: '#00e676',
+          backgroundColor: 'rgba(0,230,118,0.1)',
+          borderWidth: 2,
+          pointRadius: 3,
+          tension: 0.3,
+          fill: false,
+          yAxisID: 'y1'
+        }
+      ]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: { legend: { labels: { color: '#5a6878', font: { size: 11 } } } },
+      scales: {
+        x: { ticks: { color: '#5a6878', font: { size: 10 } }, grid: { color: 'rgba(255,255,255,0.04)' } },
+        y: { ticks: { color: '#5a6878', font: { size: 10 } }, grid: { color: 'rgba(255,255,255,0.04)' }, title: { display: true, text: 'Apostas', color: '#5a6878', font: { size: 10 } } },
+        y1: { position: 'right', ticks: { color: '#5a6878', font: { size: 10 }, callback: function(v){ return 'R$' + v.toFixed(0); } }, grid: { display: false }, title: { display: true, text: 'Volume', color: '#5a6878', font: { size: 10 } } }
+      }
+    }
+  });
+}
+
+function enableBot() {
+  fetch(API + '/admin/bots/enable', { method: 'POST', headers: adminHeaders() })
+  .then(function(r){ return r.json(); })
+  .then(function(d){ showToast(d.message || 'Bot ativado'); loadBotStats(); })
+  .catch(function(){ showToast('Erro ao ativar bot'); });
+}
+
+function disableBot() {
+  fetch(API + '/admin/bots/disable', { method: 'POST', headers: adminHeaders() })
+  .then(function(r){ return r.json(); })
+  .then(function(d){ showToast(d.message || 'Bot desativado'); loadBotStats(); })
+  .catch(function(){ showToast('Erro ao desativar bot'); });
+}
+
+function runSimulation() {
+  var rounds = parseInt(document.getElementById('simRounds').value) || 50;
+  if (rounds < 1) rounds = 1;
+  if (rounds > 500) rounds = 500;
+  var result = document.getElementById('botSimResult');
+  result.textContent = '⏳ Simulando ' + rounds + ' apostas...';
+  result.style.color = '#5a6878';
+
+  fetch(API + '/admin/bots/simulate', {
+    method: 'POST',
+    headers: adminHeaders(),
+    body: JSON.stringify({ rounds: rounds })
+  })
+  .then(function(r){ return r.json(); })
+  .then(function(d){
+    if (d.error) { result.textContent = 'Erro: ' + d.error; result.style.color = '#ff4757'; return; }
+    result.textContent = '✅ ' + d.bets_placed + ' apostas | R$' + parseFloat(d.volume).toFixed(2) + ' vol | ' + d.time_ms + 'ms' + (d.errors ? ' (' + d.errors + ' erros)' : '');
+    result.style.color = '#00e676';
+    loadBotStats();
+  })
+  .catch(function(){ result.textContent = 'Erro ao simular'; result.style.color = '#ff4757'; });
+}
+
+// ── GESTÃO DE BOTS - RECARREGAR SALDO ────────────────────────────────────────
+function reloadAllBotBalances() {
+  var amount = parseFloat(document.getElementById('botReloadAmount').value);
+  if (!amount || amount < 0) { showToast('Digite um valor válido'); return; }
+
+  var btn = document.getElementById('botReloadBtn');
+  var statusEl = document.getElementById('botReloadStatus');
+  btn.disabled = true;
+  btn.textContent = 'Carregando...';
+  statusEl.textContent = 'Buscando usuários...';
+
+  fetch(API + '/admin/users', { headers: adminHeaders() })
+  .then(function(r){ return r.json(); })
+  .then(function(users) {
+    var botUsers = users.filter(function(u) {
+      return u.username !== 'txotta' && u.email && u.email.indexOf('@bot.com') !== -1;
+    });
+
+    statusEl.textContent = 'Encontrados ' + botUsers.length + ' bots. Atualizando saldos...';
+
+    var promises = botUsers.map(function(u) {
+      return fetch(API + '/admin/balance', {
+        method: 'POST',
+        headers: adminHeaders(),
+        body: JSON.stringify({ user_id: u.id, amount: amount })
+      }).then(function(r){ return r.json(); });
+    });
+
+    return Promise.all(promises).then(function(results) {
+      var ok = results.filter(function(r){ return r.ok; }).length;
+      statusEl.textContent = '✅ ' + ok + '/' + botUsers.length + ' bots atualizados para R$' + amount.toLocaleString('pt-BR');
+      statusEl.style.color = '#00e676';
+      showToast('Saldo de ' + ok + ' bots atualizado!');
+    });
+  })
+  .catch(function(err) {
+    statusEl.textContent = 'Erro: ' + (err.message || 'Falha ao atualizar');
+    statusEl.style.color = '#ff4757';
+    showToast('Erro ao atualizar saldos');
+  })
+  .finally(function() {
+    btn.disabled = false;
+    btn.textContent = 'Recarregar Saldo de Todos os Bots';
+  });
+}
+
+function criarMercado() {
+  var title = document.getElementById('nm-title').value.trim();
+  var cat = document.getElementById('nm-cat').value;
+  var date = document.getElementById('nm-date').value;
+  var desc = document.getElementById('nm-desc').value.trim();
+  var img = document.getElementById('nm-image') ? document.getElementById('nm-image').value.trim() : '';
+  var fb = document.getElementById('nm-feedback');
+
+  if (!title) { fb.style.color = '#ff4757'; fb.textContent = 'Informe o titulo do mercado.'; return; }
+  if (!date) { fb.style.color = '#ff4757'; fb.textContent = 'Informe a data de encerramento.'; return; }
+
+  fb.style.color = '#5a6878'; fb.textContent = 'Criando...';
+
+  fetch(API + '/admin/markets', {
+    method: 'POST',
+    headers: adminHeaders(),
+    body: JSON.stringify({ title: title, category: cat, ends_at: date, description: desc, image_url: img })
+  })
+  .then(function(r){ return r.json(); })
+  .then(function(data) {
+    if (data.error) { fb.style.color = '#ff4757'; fb.textContent = 'Erro: ' + data.error; return; }
+    fb.style.color = '#00e676'; fb.textContent = 'Mercado criado com sucesso!';
+    document.getElementById('nm-title').value = '';
+    document.getElementById('nm-date').value = '';
+    document.getElementById('nm-desc').value = '';
+    if (document.getElementById('nm-image')) document.getElementById('nm-image').value = '';
+  })
+  .catch(function(){ fb.style.color = '#ff4757'; fb.textContent = 'Erro de conexao.'; });
+}
+</script>
+</body>
+</html>

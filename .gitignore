@@ -1,0 +1,21 @@
+# Dependências
+node_modules/
+.env
+.env.local
+.env.production
+
+# Scripts SQL sensíveis (operacionais, não devem ir ao repositório público)
+fix_markets.sql
+seed_market_history.sql
+
+# Logs
+*.log
+npm-debug.log*
+
+# Build
+dist/
+build/
+
+# OS
+.DS_Store
+Thumbs.db

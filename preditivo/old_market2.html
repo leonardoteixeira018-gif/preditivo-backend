@@ -1,0 +1,604 @@
+﻿<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<title>Preditivo ÔÇö Mercado</title>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+:root {
+  --bg: #080c10; --surface: #0e1419; --surface2: #141c24;
+  --border: rgba(255,255,255,0.07); --green: #00e676; --red: #ff4757;
+  --blue: #00b4ff; --gold: #ffc107; --text: #e8edf2; --muted: #5a6878;
+}
+body { font-family:'Space Grotesk',sans-serif; background:var(--bg); color:var(--text); min-height:100vh; }
+body::after {
+  content:''; position:fixed; inset:0;
+  background-image: linear-gradient(rgba(0,230,118,0.03) 1px,transparent 1px),linear-gradient(90deg,rgba(0,230,118,0.03) 1px,transparent 1px);
+  background-size:40px 40px; pointer-events:none; z-index:0;
+}
+header {
+  position:sticky; top:0; z-index:100;
+  background:rgba(8,12,16,0.9); backdrop-filter:blur(20px);
+  border-bottom:1px solid var(--border); padding:0 24px;
+}
+.header-inner { max-width:1100px; margin:0 auto; display:flex; align-items:center; gap:16px; height:64px; }
+.logo {
+  font-size:1.3rem; font-weight:700; letter-spacing:-0.5px;
+  background:linear-gradient(135deg,var(--green),var(--blue));
+  -webkit-background-clip:text; -webkit-text-fill-color:transparent;
+  cursor:pointer; text-decoration:none;
+}
+.back-btn {
+  display:flex; align-items:center; gap:6px; color:var(--muted);
+  font-size:0.85rem; cursor:pointer; text-decoration:none;
+  padding:6px 12px; border-radius:8px; border:1px solid var(--border);
+  transition:all 0.2s;
+}
+.back-btn:hover { color:var(--text); border-color:rgba(255,255,255,0.15); }
+.header-right { margin-left:auto; display:flex; align-items:center; gap:12px; }
+.user-chip {
+  display:flex; align-items:center; gap:8px; padding:6px 12px;
+  background:var(--surface); border:1px solid var(--border); border-radius:10px; font-size:0.85rem;
+}
+.user-avatar {
+  width:24px; height:24px; border-radius:50%;
+  background:linear-gradient(135deg,var(--green),var(--blue));
+  display:flex; align-items:center; justify-content:center;
+  font-size:0.7rem; font-weight:700; color:#080c10;
+}
+.login-btn {
+  padding:8px 20px; background:var(--green); color:#080c10;
+  font-weight:700; font-size:0.85rem; border:none; border-radius:10px; cursor:pointer;
+}
+
+.page { max-width:1100px; margin:0 auto; padding:32px 24px 80px; position:relative; z-index:1; }
+@media(max-width:600px) { .page { padding:16px 12px 60px; } }
+
+/* SKELETON */
+.skeleton { background:linear-gradient(90deg,var(--surface) 25%,var(--surface2) 50%,var(--surface) 75%); background-size:200% 100%; animation:shimmer 1.5s infinite; border-radius:8px; }
+@keyframes shimmer { 0%{background-position:200% 0} 100%{background-position:-200% 0} }
+
+/* LAYOUT */
+.market-layout { display:grid; grid-template-columns:1fr 360px; gap:24px; align-items:start; }
+@media(max-width:1000px) { .market-layout { grid-template-columns:1fr; } }
+@media(max-width:600px) { .market-title { font-size:1.3rem; } .prob-yes,.prob-no { font-size:1.4rem; } .stats-row { grid-template-columns:1fr 1fr; } }
+
+/* LEFT COLUMN */
+.market-main {}
+.market-category {
+  display:inline-flex; align-items:center; gap:6px;
+  font-size:0.75rem; text-transform:uppercase; letter-spacing:1px; font-weight:600;
+  padding:4px 12px; border-radius:100px; margin-bottom:16px;
+}
+.cat-politica { background:rgba(0,180,255,0.12); color:var(--blue); }
+.cat-economia { background:rgba(255,193,7,0.12); color:var(--gold); }
+.cat-futebol { background:rgba(0,230,118,0.12); color:var(--green); }
+.market-title { font-size:1.8rem; font-weight:700; line-height:1.3; margin-bottom:20px; letter-spacing:-0.5px; }
+.prob-row { display:flex; align-items:center; gap:16px; margin-bottom:8px; }
+.prob-yes { font-family:'DM Mono',monospace; font-size:2rem; font-weight:700; color:var(--green); }
+.prob-no { font-family:'DM Mono',monospace; font-size:2rem; font-weight:700; color:var(--red); }
+.prob-divider { color:var(--muted); font-size:1.2rem; }
+.prob-bar { height:8px; border-radius:100px; background:var(--surface2); overflow:hidden; margin-bottom:24px; }
+.prob-bar-fill { height:100%; border-radius:100px; background:linear-gradient(90deg,var(--green),rgba(0,230,118,0.6)); transition:width 1s ease; }
+
+/* CHART */
+.chart-card { background:var(--surface); border:1px solid var(--border); border-radius:16px; padding:24px; margin-bottom:20px; }
+.chart-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:20px; }
+.chart-title { font-size:0.95rem; font-weight:600; }
+.chart-periods { display:flex; gap:4px; }
+.period-btn {
+  padding:4px 10px; background:transparent; border:1px solid var(--border);
+  border-radius:6px; color:var(--muted); font-size:0.75rem; cursor:pointer;
+  font-family:inherit; transition:all 0.2s;
+}
+.period-btn.active { border-color:var(--green); color:var(--green); background:rgba(0,230,118,0.08); }
+.chart-empty { text-align:center; padding:60px; color:var(--muted); font-size:0.9rem; }
+
+/* TIMELINE */
+.timeline-card { background:var(--surface); border:1px solid var(--border); border-radius:16px; padding:24px; margin-bottom:20px; }
+.card-title { font-size:0.95rem; font-weight:600; margin-bottom:20px; display:flex; align-items:center; gap:8px; }
+.timeline { display:flex; flex-direction:column; gap:0; }
+.tl-item { display:flex; gap:16px; }
+.tl-line { display:flex; flex-direction:column; align-items:center; }
+.tl-dot { width:12px; height:12px; border-radius:50%; border:2px solid var(--border); background:var(--surface2); flex-shrink:0; margin-top:3px; }
+.tl-dot.done { background:var(--green); border-color:var(--green); }
+.tl-dot.active { background:var(--green); border-color:var(--green); box-shadow:0 0 8px var(--green); }
+.tl-connector { width:2px; flex:1; background:var(--border); min-height:32px; margin:4px 0; }
+.tl-content { padding-bottom:24px; }
+.tl-label { font-size:0.9rem; font-weight:600; margin-bottom:4px; }
+.tl-date { font-size:0.8rem; color:var(--muted); }
+
+/* RULES */
+.rules-card { background:var(--surface); border:1px solid var(--border); border-radius:16px; padding:24px; margin-bottom:20px; }
+.rules-text { font-size:0.9rem; color:var(--muted); line-height:1.7; }
+.rules-empty { font-size:0.85rem; color:var(--muted); font-style:italic; }
+
+/* STATS ROW */
+.stats-row { display:grid; grid-template-columns:repeat(3,1fr); gap:12px; margin-bottom:20px; }
+.stat-chip { background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:16px; }
+.stat-chip-label { font-size:0.7rem; color:var(--muted); text-transform:uppercase; letter-spacing:1px; margin-bottom:6px; }
+.stat-chip-value { font-size:1.2rem; font-weight:700; font-family:'DM Mono',monospace; }
+
+/* RIGHT COLUMN ÔÇö BET WIDGET */
+.bet-widget {
+  background:var(--surface); border:1px solid var(--border);
+  border-radius:16px; padding:24px; position:sticky; top:88px;
+}
+@media(max-width:1000px) { .bet-widget { position:static; } }
+.bet-widget-title { font-size:0.85rem; color:var(--muted); margin-bottom:16px; }
+.bet-tabs { display:flex; gap:8px; margin-bottom:16px; }
+.bet-tab {
+  flex:1; padding:10px; border-radius:8px; border:1px solid var(--border);
+  background:transparent; color:var(--muted); cursor:pointer;
+  font-family:inherit; font-weight:600; font-size:0.95rem; transition:all 0.2s;
+}
+.bet-tab.yes.active { background:rgba(0,230,118,0.12); border-color:var(--green); color:var(--green); }
+.bet-tab.no.active { background:rgba(255,71,87,0.12); border-color:var(--red); color:var(--red); }
+.bet-label { font-size:0.8rem; color:var(--muted); margin-bottom:8px; }
+.bet-input {
+  width:100%; background:var(--surface2); border:1px solid var(--border);
+  border-radius:8px; padding:12px 16px; color:var(--text);
+  font-size:1.1rem; font-family:'DM Mono',monospace; outline:none; margin-bottom:8px;
+  transition:border-color 0.2s;
+}
+.bet-input:focus { border-color:var(--green); }
+.bet-presets { display:flex; gap:6px; margin-bottom:16px; }
+.bet-preset {
+  flex:1; padding:7px; background:var(--surface2); border:1px solid var(--border);
+  border-radius:6px; color:var(--muted); font-size:0.78rem; cursor:pointer;
+  font-family:inherit; transition:all 0.2s;
+}
+.bet-preset:hover { border-color:var(--green); color:var(--green); }
+.bet-summary { background:var(--surface2); border-radius:8px; padding:14px; margin-bottom:16px; }
+.bet-row { display:flex; justify-content:space-between; font-size:0.83rem; margin-bottom:6px; }
+.bet-row:last-child { margin-bottom:0; font-weight:600; color:var(--green); }
+.bet-row span:first-child { color:var(--muted); }
+.btn-bet {
+  width:100%; padding:14px; background:var(--green); color:#080c10;
+  font-weight:700; font-size:1rem; border:none; border-radius:8px;
+  cursor:pointer; font-family:inherit; transition:opacity 0.2s;
+}
+.btn-bet:hover { opacity:0.85; }
+.btn-bet:disabled { opacity:0.4; cursor:not-allowed; }
+.bet-balance { text-align:center; font-size:0.78rem; color:var(--muted); margin-top:10px; }
+.bet-balance span { color:var(--green); }
+.resolved-badge {
+  text-align:center; padding:16px; background:rgba(0,230,118,0.08);
+  border:1px solid rgba(0,230,118,0.2); border-radius:10px;
+  color:var(--green); font-weight:600; font-size:0.95rem;
+}
+.resolved-badge.no { background:rgba(255,71,87,0.08); border-color:rgba(255,71,87,0.2); color:var(--red); }
+
+/* MODAL */
+.modal-overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,0.8); backdrop-filter:blur(8px); z-index:1000; align-items:center; justify-content:center; }
+.modal-overlay.active { display:flex; }
+.modal { background:var(--surface); border:1px solid var(--border); border-radius:16px; padding:32px; width:90%; max-width:420px; }
+.modal h3 { margin-bottom:8px; }
+.modal p { color:var(--muted); font-size:0.9rem; margin-bottom:20px; }
+.modal-input { width:100%; background:var(--surface2); border:1px solid var(--border); border-radius:8px; padding:12px 16px; color:var(--text); font-size:1rem; font-family:inherit; outline:none; margin-bottom:12px; }
+.modal-input:focus { border-color:var(--green); }
+.btn-primary { width:100%; padding:14px; background:var(--green); color:#080c10; font-weight:700; font-size:1rem; border:none; border-radius:8px; cursor:pointer; font-family:inherit; }
+.btn-secondary { width:100%; padding:12px; background:transparent; color:var(--text); font-weight:600; border:1px solid var(--border); border-radius:8px; cursor:pointer; font-family:inherit; margin-top:8px; }
+
+/* TOAST */
+.toast { position:fixed; bottom:24px; right:24px; background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:14px 20px; font-size:0.9rem; z-index:2000; transform:translateY(100px); opacity:0; transition:all 0.3s; }
+.toast.show { transform:translateY(0); opacity:1; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="header-inner">
+    <a class="logo" href="/">Bubuya.</a>
+    <a class="back-btn" href="/">ÔåÉ Mercados</a>
+    <div class="header-right" id="authArea">
+      <button class="login-btn" onclick="openModal('loginModal')">Entrar</button>
+    </div>
+  </div>
+</header>
+
+<div class="page" id="pageContent">
+  <div style="text-align:center;padding:80px;color:var(--muted)">Carregando mercado...</div>
+</div>
+
+<!-- LOGIN MODAL -->
+<div class="modal-overlay" id="loginModal">
+  <div class="modal">
+    <h3>Entrar</h3>
+    <p>Acesse sua conta para apostar</p>
+    <input class="modal-input" type="email" placeholder="Email" id="loginEmail">
+    <input class="modal-input" type="password" placeholder="Senha" id="loginPass" onkeydown="if(event.key==='Enter')doLogin()">
+    <button class="btn-primary" onclick="doLogin()">Entrar</button>
+    <button class="btn-secondary" onclick="closeModal('loginModal')">Cancelar</button>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="./config.js"></script>
+<script>
+var API = window.PREDITIVO_CONFIG.API_BASE;
+var state = { user: null, token: null, balance: 0, betSide: 'yes' };
+var market = null;
+var chart = null;
+var allHistory = [];
+
+// Get market ID from URL
+var marketId = new URLSearchParams(window.location.search).get('id') || window.location.pathname.split('/').pop();
+
+function showToast(msg) {
+  var t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(function(){ t.classList.remove('show'); }, 3000);
+}
+
+function openModal(id) { document.getElementById(id).classList.add('active'); }
+function closeModal(id) { document.getElementById(id).classList.remove('active'); }
+
+async function apiGet(path, token) {
+  var res = await fetch(API + path, { headers: token ? { Authorization: 'Bearer ' + token } : {} });
+  return res.json();
+}
+async function apiPost(path, body, token) {
+  var res = await fetch(API + path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: 'Bearer ' + token } : {}) },
+    body: JSON.stringify(body)
+  });
+  return res.json();
+}
+
+function catLabel(c) {
+  return { politica: 'Politica', economia: 'Economia', futebol: 'Futebol', tech: 'Tech' }[c] || c;
+}
+
+function formatDate(d) {
+  if (!d) return '-';
+  return new Date(d).toLocaleDateString('pt-BR', { day:'2-digit', month:'long', year:'numeric' });
+}
+
+function renderPage() {
+  var m = market;
+  var total = parseFloat(m.q_yes) + parseFloat(m.q_no);
+  var probYes = Math.round(parseFloat(m.q_yes) / total * 100);
+  var probNo = 100 - probYes;
+  var volume = Math.max(0, total - 200).toFixed(0);
+  var isResolved = !!m.resolved_at;
+
+  document.title = m.title + ' ÔÇö Preditivo';
+
+  var betWidget = '';
+  if (isResolved) {
+    var outcomeYes = m.resolved_outcome === 'yes';
+    betWidget = '<div class="resolved-badge ' + (outcomeYes ? '' : 'no') + '">' +
+      'Mercado encerrado ÔÇö Resultado: ' + (outcomeYes ? 'SIM' : 'NAO') +
+      '</div>' +
+      '<div style="margin-top:12px;font-size:0.8rem;color:var(--muted);text-align:center">Resolvido em ' + formatDate(m.resolved_at) + '</div>';
+  } else {
+    betWidget = '<div class="bet-widget-title">Fazer aposta</div>' +
+      '<div class="bet-tabs">' +
+        '<button class="bet-tab yes active" id="tabYes" onclick="selectSide(\'yes\')">SIM ' + probYes + '%</button>' +
+        '<button class="bet-tab no" id="tabNo" onclick="selectSide(\'no\')">NAO ' + probNo + '%</button>' +
+      '</div>' +
+      '<div class="bet-label">Valor (R$)</div>' +
+      '<input class="bet-input" type="number" id="betAmt" placeholder="0.00" min="1" oninput="updateSummary()">' +
+      '<div class="bet-presets">' +
+        '<button class="bet-preset" onclick="setAmt(10)">10</button>' +
+        '<button class="bet-preset" onclick="setAmt(50)">50</button>' +
+        '<button class="bet-preset" onclick="setAmt(100)">100</button>' +
+        '<button class="bet-preset" onclick="setAmt(500)">500</button>' +
+      '</div>' +
+      '<div class="bet-summary">' +
+        '<div class="bet-row"><span>Probabilidade</span><span id="sumProb">' + probYes + '%</span></div>' +
+        '<div class="bet-row"><span>Taxa (2%)</span><span id="sumTaxa">-</span></div>' +
+        '<div class="bet-row"><span>Retorno potencial</span><span id="sumReturn">-</span></div>' +
+      '</div>' +
+      '<button class="btn-bet" onclick="confirmBet()">Confirmar Aposta</button>' +
+      '<div class="bet-balance">Saldo: <span id="balDisplay">R$' + (state.balance||0).toFixed(2) + '</span></div>';
+  }
+
+  var html = '<div class="market-layout">' +
+    '<div class="market-main">' +
+      '<div class="market-category cat-' + m.category + '">' + catLabel(m.category) + '</div>' +
+      '<h1 class="market-title">' + m.title + '</h1>' +
+      '<div class="prob-row">' +
+        '<span class="prob-yes">' + probYes + '%</span>' +
+        '<span class="prob-divider">┬À</span>' +
+        '<span class="prob-no">' + probNo + '%</span>' +
+        '<span style="color:var(--muted);font-size:0.85rem;margin-left:4px">chance de SIM</span>' +
+      '</div>' +
+      '<div class="prob-bar"><div class="prob-bar-fill" id="probBar" style="width:' + probYes + '%"></div></div>' +
+
+      '<div class="stats-row">' +
+        '<div class="stat-chip"><div class="stat-chip-label">Volume</div><div class="stat-chip-value" style="color:var(--gold)">R$' + volume + '</div></div>' +
+        '<div class="stat-chip"><div class="stat-chip-label">Encerra</div><div class="stat-chip-value" style="font-size:0.9rem;font-family:inherit">' + formatDate(m.ends_at) + '</div></div>' +
+        '<div class="stat-chip"><div class="stat-chip-label">Status</div><div class="stat-chip-value" style="font-size:0.9rem;font-family:inherit;color:' + (isResolved ? 'var(--muted)' : 'var(--green)') + '">' + (isResolved ? 'Encerrado' : 'Aberto') + '</div></div>' +
+      '</div>' +
+
+      '<div class="chart-card">' +
+        '<div class="chart-header">' +
+          '<div class="chart-title">Probabilidade historica</div>' +
+          '<div class="chart-periods">' +
+            '<button class="period-btn active" onclick="filterChart(\'all\',this)">Tudo</button>' +
+            '<button class="period-btn" onclick="filterChart(\'1m\',this)">1M</button>' +
+            '<button class="period-btn" onclick="filterChart(\'7d\',this)">7D</button>' +
+            '<button class="period-btn" onclick="filterChart(\'24h\',this)">24H</button>' +
+          '</div>' +
+        '</div>' +
+        (allHistory.length > 0
+          ? '<div style="position:relative;height:220px;width:100%"><canvas id="probChart"></canvas></div>'
+          : '<div class="chart-empty">Nenhuma aposta ainda ÔÇö o grafico aparece apos a primeira aposta</div>') +
+      '</div>' +
+
+      '<div class="timeline-card">' +
+        '<div class="card-title">Timeline</div>' +
+        '<div class="timeline">' +
+          '<div class="tl-item">' +
+            '<div class="tl-line"><div class="tl-dot done"></div><div class="tl-connector"></div></div>' +
+            '<div class="tl-content"><div class="tl-label">Mercado aberto</div><div class="tl-date">' + formatDate(m.created_at) + '</div></div>' +
+          '</div>' +
+          '<div class="tl-item">' +
+            '<div class="tl-line"><div class="tl-dot ' + (isResolved ? 'done' : (m.ends_at && new Date(m.ends_at) < new Date() ? 'active' : '')) + '"></div><div class="tl-connector"></div></div>' +
+            '<div class="tl-content"><div class="tl-label">Encerramento de apostas</div><div class="tl-date">' + formatDate(m.ends_at) + '</div></div>' +
+          '</div>' +
+          '<div class="tl-item">' +
+            '<div class="tl-line"><div class="tl-dot ' + (isResolved ? 'done' : '') + '"></div></div>' +
+            '<div class="tl-content"><div class="tl-label">Resolucao e pagamento</div><div class="tl-date">' + (isResolved ? formatDate(m.resolved_at) : 'Apos o resultado ser confirmado') + '</div></div>' +
+          '</div>' +
+        '</div>' +
+      '</div>' +
+
+      '<div class="rules-card">' +
+        '<div class="card-title">Regras de resolucao</div>' +
+        (m.description
+          ? '<div class="rules-text">' + m.description + '</div>'
+          : '<div class="rules-empty">Nenhuma regra cadastrada para este mercado.</div>') +
+      '</div>' +
+
+    '</div>' +
+
+    '<div class="bet-widget">' + betWidget + '</div>' +
+  '</div>';
+
+  document.getElementById('pageContent').innerHTML = html;
+
+  if (allHistory.length > 0) {
+    setTimeout(function(){ renderChart(allHistory); }, 100);
+  }
+}
+
+function renderChart(data) {
+  var ctx = document.getElementById('probChart');
+  if (!ctx) return;
+  if (chart) { chart.destroy(); chart = null; }
+
+  // Ordenar por data
+  var sorted = data.slice().sort(function(a, b) { return new Date(a.created_at) - new Date(b.created_at); });
+
+  // Agrupar transa├º├Áes que ocorrem no mesmo "label textual" (mesmo minuto)
+  // Pegando sempre o ├║ltimo pre├ºo (fechamento do minuto)
+  var grouped = [];
+  var currentLabel = null;
+  var currentItem = null;
+
+  sorted.forEach(function(h) {
+    var d = new Date(h.created_at);
+    var label = d.toLocaleDateString('pt-BR', { day:'2-digit', month:'2-digit' }) + ' ' +
+                d.toLocaleTimeString('pt-BR', { hour:'2-digit', minute:'2-digit' });
+
+    if (label !== currentLabel) {
+      if (currentItem) grouped.push(currentItem);
+      currentLabel = label;
+      currentItem = { label: label, prob_yes: h.prob_yes };
+    } else {
+      currentItem.prob_yes = h.prob_yes;
+    }
+  });
+  if (currentItem) grouped.push(currentItem);
+
+  var labels = grouped.map(function(item) { return item.label; });
+  var yesData = grouped.map(function(item) { return parseFloat(parseFloat(item.prob_yes).toFixed(1)); });
+  var noData = yesData.map(function(v) { return parseFloat((100 - v).toFixed(1)); });
+
+  var ptRadius = sorted.length > 30 ? 0 : 3;
+
+  chart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: labels,
+      datasets: [
+        {
+          label: 'SIM %',
+          data: yesData,
+          borderColor: '#00e676',
+          backgroundColor: 'rgba(0,230,118,0.1)',
+          borderWidth: 2,
+          pointRadius: ptRadius,
+          pointHoverRadius: 5,
+          fill: true,
+          tension: 0
+        },
+        {
+          label: 'NAO %',
+          data: noData,
+          borderColor: '#ff4757',
+          backgroundColor: 'transparent',
+          borderWidth: 1.5,
+          borderDash: [4, 3],
+          pointRadius: ptRadius,
+          pointHoverRadius: 5,
+          fill: false,
+          tension: 0
+        }
+      ]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: { duration: 400 },
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { labels: { color: '#5a6878', font: { family: 'Space Grotesk' } } },
+        tooltip: {
+          backgroundColor: '#0e1419',
+          borderColor: 'rgba(255,255,255,0.07)',
+          borderWidth: 1,
+          titleColor: '#e8edf2',
+          bodyColor: '#5a6878'
+        }
+      },
+      scales: {
+        x: {
+          grid: { color: 'rgba(255,255,255,0.04)' },
+          ticks: { color: '#5a6878', maxTicksLimit: 8, font: { size: 11 }, maxRotation: 0 }
+        },
+        y: {
+          min: 0, max: 100,
+          grid: { color: 'rgba(255,255,255,0.04)' },
+          ticks: { color: '#5a6878', callback: function(v){ return v + '%'; }, stepSize: 20 }
+        }
+      }
+    }
+  });
+}
+
+function filterChart(period, el) {
+  document.querySelectorAll('.period-btn').forEach(function(b){ b.classList.remove('active'); });
+  el.classList.add('active');
+  var now = new Date();
+  var filtered = allHistory;
+  if (period === '1m') {
+    var cutoff1m = new Date(now - 30 * 24 * 60 * 60 * 1000);
+    filtered = allHistory.filter(function(h){ return new Date(h.created_at) >= cutoff1m; });
+  } else if (period === '7d') {
+    var cutoff = new Date(now - 7 * 24 * 60 * 60 * 1000);
+    filtered = allHistory.filter(function(h){ return new Date(h.created_at) >= cutoff; });
+  } else if (period === '24h') {
+    var cutoff24 = new Date(now - 24 * 60 * 60 * 1000);
+    filtered = allHistory.filter(function(h){ return new Date(h.created_at) >= cutoff24; });
+  }
+  if (filtered.length > 0) renderChart(filtered);
+}
+
+function selectSide(side) {
+  state.betSide = side;
+  document.getElementById('tabYes').classList.toggle('active', side === 'yes');
+  document.getElementById('tabNo').classList.toggle('active', side === 'no');
+  updateSummary();
+}
+
+function setAmt(v) {
+  document.getElementById('betAmt').value = v;
+  updateSummary();
+}
+
+function updateSummary() {
+  var amt = parseFloat(document.getElementById('betAmt').value) || 0;
+  if (!market || amt <= 0) return;
+  var total = parseFloat(market.q_yes) + parseFloat(market.q_no);
+  var prob = state.betSide === 'yes' ? parseFloat(market.q_yes) / total : parseFloat(market.q_no) / total;
+  var taxa = amt * 0.02;
+  var liquido = amt - taxa;
+  var retorno = (liquido / prob).toFixed(2);
+  var probPct = Math.round(prob * 100);
+  document.getElementById('sumProb').textContent = probPct + '%';
+  document.getElementById('sumTaxa').textContent = 'R$ ' + taxa.toFixed(2);
+  document.getElementById('sumReturn').textContent = 'R$ ' + retorno;
+}
+
+async function confirmBet() {
+  if (!state.token) { openModal('loginModal'); return; }
+  var amt = parseFloat(document.getElementById('betAmt').value);
+  if (!amt || amt <= 0) { showToast('Insira um valor'); return; }
+  if (amt > state.balance) { showToast('Saldo insuficiente'); return; }
+
+  try {
+    var data = await apiPost('/bets', { market_id: marketId, side: state.betSide, amount: amt }, state.token);
+    if (data.error) { showToast('Erro: ' + data.error); return; }
+    state.balance = parseFloat(data.new_balance);
+    document.getElementById('balDisplay').textContent = 'R$' + state.balance.toFixed(2);
+    showToast('Aposta confirmada! Retorno potencial: R$' + data.bet.potential_payout);
+    document.getElementById('betAmt').value = '';
+    // Reload market data
+    await loadMarket();
+  } catch(e) {
+    showToast('Erro de conexao');
+  }
+}
+
+async function doLogin() {
+  var email = document.getElementById('loginEmail').value;
+  var pass = document.getElementById('loginPass').value;
+  try {
+    var data = await apiPost('/auth/login', { email, password: pass });
+    if (data.error) { showToast('Erro: ' + data.error); return; }
+    state.user = data.user;
+    state.token = data.token;
+    state.balance = parseFloat(data.user.balance);
+    localStorage.setItem('preditivo_token', data.token);
+    closeModal('loginModal');
+    updateAuthUI();
+    showToast('Bem-vindo, ' + data.user.name);
+  } catch(e) { showToast('Erro de conexao'); }
+}
+
+function updateAuthUI() {
+  var area = document.getElementById('authArea');
+  if (state.user) {
+    area.innerHTML = '<div class="user-chip">' +
+      '<div class="user-avatar">' + state.user.name.slice(0,2).toUpperCase() + '</div>' +
+      '<span>' + state.user.name + '</span>' +
+      '<span style="color:var(--green);font-family:DM Mono,monospace;font-size:0.8rem;margin-left:4px">R$' + state.balance.toFixed(0) + '</span>' +
+      '</div>';
+    var balEl = document.getElementById('balDisplay');
+    if (balEl) balEl.textContent = 'R$' + state.balance.toFixed(2);
+  }
+}
+
+async function loadMarket() {
+  try {
+    var data = await apiGet('/markets/' + marketId);
+    if (data.error) {
+      document.getElementById('pageContent').innerHTML = '<div style="text-align:center;padding:80px;color:var(--muted)">Mercado nao encontrado.</div>';
+      return;
+    }
+    market = data;
+    allHistory = data.history || [];
+    renderPage();
+  } catch(e) {
+    document.getElementById('pageContent').innerHTML = '<div style="text-align:center;padding:80px;color:var(--muted)">Erro ao carregar mercado.</div>';
+  }
+}
+
+async function init() {
+  if (!marketId || marketId === 'market.html') {
+    document.getElementById('pageContent').innerHTML = '<div style="text-align:center;padding:80px;color:var(--muted)">ID do mercado nao informado.</div>';
+    return;
+  }
+
+  // Restore session
+  var savedToken = localStorage.getItem('preditivo_token');
+  if (savedToken) {
+    try {
+      var user = await apiGet('/auth/me', savedToken);
+      if (user && user.id) {
+        state.user = user;
+        state.token = savedToken;
+        state.balance = parseFloat(user.balance);
+        updateAuthUI();
+      }
+    } catch(e) { localStorage.removeItem('preditivo_token'); }
+  }
+
+  await loadMarket();
+}
+
+init();
+</script>
+</body>
+</html>

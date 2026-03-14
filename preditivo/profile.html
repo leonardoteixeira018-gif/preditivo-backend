@@ -1,0 +1,648 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<title>Bubuya — Meu Perfil</title>
+<meta name="description" content="Gerencie seu perfil, apostas, depósitos e saque na Bubuya.">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+:root {
+  --bg:#080c10; --surface:#0e1419; --surface2:#141c24;
+  --border:rgba(255,255,255,0.07); --green:#00e676; --red:#ff4757;
+  --blue:#00b4ff; --gold:#ffc107; --text:#e8edf2; --muted:#5a6878;
+}
+body { font-family:'Space Grotesk',sans-serif; background:var(--bg); color:var(--text); min-height:100vh; }
+body::after {
+  content:''; position:fixed; inset:0;
+  background-image:linear-gradient(rgba(0,230,118,0.03) 1px,transparent 1px),linear-gradient(90deg,rgba(0,230,118,0.03) 1px,transparent 1px);
+  background-size:40px 40px; pointer-events:none; z-index:0;
+}
+header {
+  position:sticky; top:0; z-index:100;
+  background:rgba(8,12,16,0.9); backdrop-filter:blur(20px);
+  border-bottom:1px solid var(--border); padding:0 24px;
+}
+.header-inner { max-width:1100px; margin:0 auto; display:flex; align-items:center; gap:16px; height:64px; }
+.logo {
+  font-size:1.3rem; font-weight:700; letter-spacing:-0.5px;
+  background:linear-gradient(135deg,var(--green),var(--blue));
+  -webkit-background-clip:text; -webkit-text-fill-color:transparent;
+  cursor:pointer; text-decoration:none;
+}
+.back-btn {
+  display:flex; align-items:center; gap:6px; color:var(--muted);
+  font-size:0.85rem; cursor:pointer; text-decoration:none;
+  padding:6px 12px; border-radius:8px; border:1px solid var(--border); transition:all 0.2s;
+}
+.back-btn:hover { color:var(--text); border-color:rgba(255,255,255,0.15); }
+.header-right { margin-left:auto; display:flex; align-items:center; gap:12px; }
+.user-chip {
+  display:flex; align-items:center; gap:8px; padding:6px 12px;
+  background:var(--surface); border:1px solid var(--border); border-radius:10px; font-size:0.85rem;
+}
+.user-avatar {
+  width:28px; height:28px; border-radius:50%;
+  background:linear-gradient(135deg,var(--green),var(--blue));
+  display:flex; align-items:center; justify-content:center;
+  font-size:0.75rem; font-weight:700; color:#080c10;
+}
+
+.page { max-width:1100px; margin:0 auto; padding:32px 24px 80px; position:relative; z-index:1; }
+
+/* PROFILE HEADER */
+.profile-header {
+  background:var(--surface); border:1px solid var(--border);
+  border-radius:20px; padding:32px; margin-bottom:24px;
+  display:flex; align-items:center; gap:24px;
+  position:relative; overflow:hidden; isolation:isolate;
+}
+.profile-header::before {
+  content:''; position:absolute; top:-40px; right:-40px;
+  width:200px; height:200px; border-radius:50%;
+  background:radial-gradient(circle,rgba(0,230,118,0.1) 0%,transparent 70%);
+}
+.profile-avatar-lg {
+  width:80px; height:80px; border-radius:50%;
+  background:linear-gradient(135deg,var(--green),var(--blue));
+  display:flex; align-items:center; justify-content:center;
+  font-size:1.8rem; font-weight:700; color:#080c10; flex-shrink:0;
+}
+.profile-info { flex:1; }
+.profile-name { font-size:1.6rem; font-weight:700; margin-bottom:4px; }
+.profile-email { font-size:0.85rem; color:var(--muted); margin-bottom:12px; }
+.profile-badges { display:flex; gap:8px; flex-wrap:wrap; }
+.badge-chip {
+  padding:4px 12px; border-radius:100px; font-size:0.75rem; font-weight:600;
+  background:rgba(0,230,118,0.1); color:var(--green); border:1px solid rgba(0,230,118,0.2);
+}
+.btn-edit {
+  padding:10px 20px; background:var(--surface2); border:1px solid var(--border);
+  border-radius:8px; color:var(--text); cursor:pointer; font-family:inherit;
+  font-size:0.85rem; font-weight:600; transition:all 0.2s; position:relative; z-index:2;
+}
+.btn-edit:hover { border-color:var(--green); color:var(--green); }
+
+/* STATS GRID */
+.stats-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:16px; margin-bottom:24px; }
+@media(max-width:700px) { .stats-grid { grid-template-columns:repeat(2,1fr); } }
+.stat-card {
+  background:var(--surface); border:1px solid var(--border);
+  border-radius:14px; padding:20px;
+}
+.stat-label { font-size:0.72rem; color:var(--muted); text-transform:uppercase; letter-spacing:1px; margin-bottom:8px; }
+.stat-value { font-size:1.5rem; font-weight:700; font-family:'DM Mono',monospace; }
+
+/* TABS */
+.tabs { display:flex; gap:4px; border-bottom:1px solid var(--border); margin-bottom:24px; }
+.tab-btn {
+  padding:10px 20px; background:transparent; border:none;
+  color:var(--muted); cursor:pointer; font-family:inherit;
+  font-size:0.9rem; font-weight:500; border-bottom:2px solid transparent;
+  margin-bottom:-1px; transition:all 0.2s;
+}
+.tab-btn.active { color:var(--green); border-bottom-color:var(--green); }
+.tab-btn:hover:not(.active) { color:var(--text); }
+.tab-content { display:none; }
+.tab-content.active { display:block; }
+
+/* BETS TABLE */
+.bets-table { width:100%; border-collapse:collapse; }
+.bets-table th {
+  text-align:left; padding:10px 12px; font-size:0.72rem;
+  text-transform:uppercase; letter-spacing:1px; color:var(--muted);
+  border-bottom:1px solid var(--border);
+}
+.bets-table td { padding:14px 12px; font-size:0.9rem; border-bottom:1px solid rgba(255,255,255,0.03); }
+.bets-table tr:hover td { background:rgba(255,255,255,0.02); }
+.status-badge {
+  padding:3px 10px; border-radius:100px; font-size:0.75rem; font-weight:600;
+}
+.status-open { background:rgba(0,180,255,0.12); color:var(--blue); }
+.status-won { background:rgba(0,230,118,0.12); color:var(--green); }
+.status-lost { background:rgba(255,71,87,0.12); color:var(--red); }
+.side-yes { background:rgba(0,230,118,0.12); color:var(--green); padding:3px 10px; border-radius:6px; font-size:0.8rem; font-weight:700; }
+.side-no { background:rgba(255,71,87,0.12); color:var(--red); padding:3px 10px; border-radius:6px; font-size:0.8rem; font-weight:700; }
+
+/* PNL TABLE */
+.pnl-card {
+  background:var(--surface); border:1px solid var(--border);
+  border-radius:14px; padding:20px; margin-bottom:12px;
+  display:flex; align-items:center; gap:16px;
+}
+.pnl-market { flex:1; font-size:0.9rem; font-weight:500; }
+.pnl-meta { font-size:0.78rem; color:var(--muted); margin-top:4px; }
+.pnl-value { font-family:'DM Mono',monospace; font-size:1rem; font-weight:700; text-align:right; }
+.pnl-pos { color:var(--green); }
+.pnl-neg { color:var(--red); }
+.pnl-neutral { color:var(--muted); }
+
+/* DEPOSITS TABLE */
+.deposit-row { display:flex; align-items:center; gap:16px; padding:14px 0; border-bottom:1px solid rgba(255,255,255,0.03); }
+.deposit-code { font-family:'DM Mono',monospace; font-size:0.85rem; color:var(--blue); }
+.deposit-amount { font-family:'DM Mono',monospace; font-size:1rem; font-weight:700; color:var(--green); margin-left:auto; }
+.deposit-status { padding:3px 10px; border-radius:100px; font-size:0.75rem; font-weight:600; }
+.dep-pending { background:rgba(255,193,7,0.12); color:var(--gold); }
+.dep-confirmed { background:rgba(0,230,118,0.12); color:var(--green); }
+.dep-rejected { background:rgba(255,71,87,0.12); color:var(--red); }
+
+/* EDIT FORM */
+.edit-card {
+  background:var(--surface); border:1px solid var(--border);
+  border-radius:14px; padding:28px; max-width:500px;
+}
+.form-group { margin-bottom:16px; }
+.form-label { display:block; font-size:0.8rem; color:var(--muted); margin-bottom:6px; text-transform:uppercase; letter-spacing:1px; }
+.form-input {
+  width:100%; background:var(--surface2); border:1px solid var(--border);
+  border-radius:8px; padding:12px 16px; color:var(--text);
+  font-family:inherit; font-size:0.95rem; outline:none; transition:border-color 0.2s;
+}
+.form-input:focus { border-color:var(--green); }
+.btn-save {
+  padding:12px 28px; background:var(--green); color:#080c10;
+  font-weight:700; font-size:0.95rem; border:none; border-radius:8px;
+  cursor:pointer; font-family:inherit; transition:opacity 0.2s;
+}
+.btn-save:hover { opacity:0.85; }
+.form-feedback { margin-top:12px; font-size:0.85rem; }
+
+/* EMPTY STATE */
+.empty { text-align:center; padding:60px; color:var(--muted); }
+.empty-icon { font-size:3rem; margin-bottom:16px; }
+
+/* MODAL */
+.modal-overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,0.8); backdrop-filter:blur(8px); z-index:1000; align-items:center; justify-content:center; }
+.modal-overlay.active { display:flex; }
+.modal { background:var(--surface); border:1px solid var(--border); border-radius:16px; padding:32px; width:90%; max-width:420px; }
+.modal h3 { margin-bottom:8px; }
+.modal p { color:var(--muted); font-size:0.9rem; margin-bottom:20px; }
+.modal-input { width:100%; background:var(--surface2); border:1px solid var(--border); border-radius:8px; padding:12px 16px; color:var(--text); font-size:1rem; font-family:inherit; outline:none; margin-bottom:12px; }
+.modal-input:focus { border-color:var(--green); }
+.btn-primary { width:100%; padding:14px; background:var(--green); color:#080c10; font-weight:700; font-size:1rem; border:none; border-radius:8px; cursor:pointer; font-family:inherit; }
+.btn-secondary { width:100%; padding:12px; background:transparent; color:var(--text); font-weight:600; border:1px solid var(--border); border-radius:8px; cursor:pointer; font-family:inherit; margin-top:8px; }
+
+.toast { position:fixed; bottom:24px; right:24px; background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:14px 20px; font-size:0.9rem; z-index:2000; transform:translateY(100px); opacity:0; transition:all 0.3s; }
+.toast.show { transform:translateY(0); opacity:1; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="header-inner">
+    <a class="logo" href="/">Bubuya.</a>
+    <a class="back-btn" href="/">← Mercados</a>
+    <div class="header-right" id="authArea"></div>
+  </div>
+</header>
+
+<div class="page" id="pageContent">
+  <div style="text-align:center;padding:80px;color:var(--muted)">Carregando perfil...</div>
+</div>
+
+<!-- LOGIN MODAL -->
+<div class="modal-overlay" id="loginModal">
+  <div class="modal">
+    <div id="loginStep1">
+      <h3>Entrar</h3>
+      <p>Acesse sua conta para ver o perfil</p>
+      <input class="modal-input" type="email" placeholder="Email" id="loginEmail">
+      <input class="modal-input" type="password" placeholder="Senha" id="loginPass" onkeydown="if(event.key==='Enter')doLogin()">
+      <button class="btn-primary" onclick="doLogin()">Entrar</button>
+      <button class="btn-secondary" onclick="window.location.href='/'">Voltar</button>
+    </div>
+    <div id="loginStep2" style="display:none">
+      <h3>Verificação em duas etapas</h3>
+      <p>Enviamos um código de 6 dígitos para o seu email.</p>
+      <input class="modal-input" type="text" placeholder="Código de 6 dígitos" id="login2faCode" maxlength="6" inputmode="numeric" autocomplete="one-time-code">
+      <button class="btn-primary" onclick="doLogin2fa()">Verificar</button>
+      <button class="btn-secondary" onclick="document.getElementById('loginStep1').style.display='';document.getElementById('loginStep2').style.display='none'">Voltar</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="./config.js"></script>
+<script>
+var API = window.PREDITIVO_CONFIG.API_BASE;
+var state = { user: null, token: null, bets: [], deposits: [] };
+
+function showToast(msg) {
+  var t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(function(){ t.classList.remove('show'); }, 3000);
+}
+
+function openModal(id) { document.getElementById(id).classList.add('active'); }
+function closeModal(id) { document.getElementById(id).classList.remove('active'); }
+
+async function apiGet(path, token) {
+  var res = await fetch(API + path, { headers: token ? { Authorization: 'Bearer ' + token } : {} });
+  return res.json();
+}
+async function apiPost(path, body, token) {
+  var res = await fetch(API + path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: 'Bearer ' + token } : {}) },
+    body: JSON.stringify(body)
+  });
+  return res.json();
+}
+async function apiPatch(path, body, token) {
+  var res = await fetch(API + path, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: 'Bearer ' + token } : {}) },
+    body: JSON.stringify(body)
+  });
+  return res.json();
+}
+
+function formatDate(d) {
+  if (!d) return '-';
+  return new Date(d).toLocaleDateString('pt-BR', { day:'2-digit', month:'2-digit', year:'numeric' });
+}
+
+function switchTab(name) {
+  document.querySelectorAll('.tab-btn').forEach(function(b){ b.classList.remove('active'); });
+  document.querySelectorAll('.tab-content').forEach(function(c){ c.classList.remove('active'); });
+  document.getElementById('tab-btn-' + name).classList.add('active');
+  document.getElementById('tab-' + name).classList.add('active');
+  if (name === 'indicacoes') loadIndicacoes();
+  // seguranca tab is rendered by renderPage, no async load needed
+}
+
+function renderPage() {
+  var u = state.user;
+  var bets = state.bets;
+  var deposits = state.deposits;
+
+  // Stats
+  var totalBets = bets.length;
+  var won = bets.filter(function(b){ return b.status === 'won'; }).length;
+  var totalInvested = bets.reduce(function(s,b){ return s + parseFloat(b.amount); }, 0);
+  var totalPayout = bets.filter(function(b){ return b.status === 'won'; }).reduce(function(s,b){ return s + parseFloat(b.payout || b.potential_payout || 0); }, 0);
+  var totalLost = bets.filter(function(b){ return b.status === 'lost'; }).reduce(function(s,b){ return s + parseFloat(b.amount); }, 0);
+  var pnl = totalPayout - totalLost;
+  var winRate = totalBets > 0 ? Math.round((won / totalBets) * 100) : 0;
+
+  // Bets rows
+  var betsRows = bets.length === 0
+    ? '<tr><td colspan="5" style="text-align:center;padding:40px;color:var(--muted)">Nenhuma aposta ainda</td></tr>'
+    : bets.map(function(b) {
+        var pnlVal = b.status === 'won' ? parseFloat(b.payout || b.potential_payout || 0) - parseFloat(b.amount)
+                   : b.status === 'lost' ? -parseFloat(b.amount) : null;
+        var pnlStr = pnlVal === null ? '-' : (pnlVal >= 0 ? '<span style="color:var(--green)">+R$'+pnlVal.toFixed(2)+'</span>' : '<span style="color:var(--red)">-R$'+Math.abs(pnlVal).toFixed(2)+'</span>');
+        return '<tr>' +
+          '<td style="max-width:260px;font-size:0.85rem">' + (b.market_title || b.market_id) + '</td>' +
+          '<td><span class="side-' + b.side + '">' + (b.side === 'yes' ? 'SIM' : 'NAO') + '</span></td>' +
+          '<td style="font-family:DM Mono,monospace">R$' + parseFloat(b.amount).toFixed(2) + '</td>' +
+          '<td><span class="status-badge status-' + b.status + '">' + b.status.toUpperCase() + '</span></td>' +
+          '<td>' + pnlStr + '</td>' +
+          '</tr>';
+      }).join('');
+
+  // PnL by market
+  var marketMap = {};
+  bets.forEach(function(b) {
+    var key = b.market_title || b.market_id;
+    if (!marketMap[key]) marketMap[key] = { title: key, invested: 0, returned: 0, count: 0 };
+    marketMap[key].invested += parseFloat(b.amount);
+    marketMap[key].count++;
+    if (b.status === 'won') marketMap[key].returned += parseFloat(b.payout || b.potential_payout || 0);
+    if (b.status === 'lost') marketMap[key].returned += 0;
+  });
+  var pnlCards = Object.values(marketMap).length === 0
+    ? '<div class="empty"><div class="empty-icon">📊</div>Nenhuma aposta ainda</div>'
+    : Object.values(marketMap).map(function(m) {
+        var mp = m.returned - m.invested;
+        var mpClass = mp > 0 ? 'pnl-pos' : mp < 0 ? 'pnl-neg' : 'pnl-neutral';
+        var mpStr = mp > 0 ? '+R$'+mp.toFixed(2) : 'R$'+mp.toFixed(2);
+        return '<div class="pnl-card">' +
+          '<div><div class="pnl-market">' + m.title + '</div><div class="pnl-meta">' + m.count + ' aposta(s) · investido R$' + m.invested.toFixed(2) + '</div></div>' +
+          '<div class="pnl-value ' + mpClass + '">' + mpStr + '</div>' +
+          '</div>';
+      }).join('');
+
+  // Deposits rows
+  var depRows = deposits.length === 0
+    ? '<div class="empty"><div class="empty-icon">💰</div>Nenhum depósito ainda</div>'
+    : deposits.map(function(d) {
+        return '<div class="deposit-row">' +
+          '<div>' +
+            '<div class="deposit-code">' + d.code + '</div>' +
+            '<div style="font-size:0.78rem;color:var(--muted);margin-top:3px">' + formatDate(d.created_at) + '</div>' +
+          '</div>' +
+          '<span class="deposit-status dep-' + d.status + '">' + d.status.toUpperCase() + '</span>' +
+          '<div class="deposit-amount">R$' + parseFloat(d.amount).toFixed(2) + '</div>' +
+        '</div>';
+      }).join('');
+
+  var html =
+    '<div class="profile-header">' +
+      '<div class="profile-avatar-lg">' + u.name.slice(0,2).toUpperCase() + '</div>' +
+      '<div class="profile-info">' +
+        '<div class="profile-name">' + u.name + '</div>' +
+        '<div class="profile-email">' + u.email + '</div>' +
+        '<div class="profile-badges">' +
+          '<span class="badge-chip">Trader</span>' +
+          (winRate >= 60 ? '<span class="badge-chip" style="background:rgba(255,193,7,0.1);color:var(--gold);border-color:rgba(255,193,7,0.2)">Preciso</span>' : '') +
+          (totalBets >= 10 ? '<span class="badge-chip" style="background:rgba(0,180,255,0.1);color:var(--blue);border-color:rgba(0,180,255,0.2)">Veterano</span>' : '') +
+        '</div>' +
+      '</div>' +
+      '<button class="btn-edit" onclick="switchTab(\'editar\')">Editar perfil</button>' +
+    '</div>' +
+
+    '<div class="stats-grid">' +
+      '<div class="stat-card"><div class="stat-label">Saldo</div><div class="stat-value" style="color:var(--green)">R$' + parseFloat(u.balance || 0).toFixed(2) + '</div></div>' +
+      '<div class="stat-card"><div class="stat-label">Apostas</div><div class="stat-value">' + totalBets + '</div></div>' +
+      '<div class="stat-card"><div class="stat-label">Taxa de acerto</div><div class="stat-value" style="color:' + (winRate >= 50 ? 'var(--green)' : 'var(--red)') + '">' + winRate + '%</div></div>' +
+      '<div class="stat-card"><div class="stat-label">P&L Total</div><div class="stat-value ' + (pnl >= 0 ? 'pnl-pos' : 'pnl-neg') + '">' + (pnl >= 0 ? '+' : '') + 'R$' + pnl.toFixed(2) + '</div></div>' +
+    '</div>' +
+
+    '<div class="tabs">' +
+      '<button class="tab-btn active" id="tab-btn-apostas" onclick="switchTab(\'apostas\')">Apostas</button>' +
+      '<button class="tab-btn" id="tab-btn-pnl" onclick="switchTab(\'pnl\')">P&L por Mercado</button>' +
+      '<button class="tab-btn" id="tab-btn-depositos" onclick="switchTab(\'depositos\')">Depósitos</button>' +
+      '<button class="tab-btn" id="tab-btn-editar" onclick="switchTab(\'editar\')">Editar Perfil</button>' +
+      '<button class="tab-btn" id="tab-btn-seguranca" onclick="switchTab(\'seguranca\')">🔒 Segurança</button>' +
+      '<button class="tab-btn" id="tab-btn-indicacoes" onclick="switchTab(\'indicacoes\')">🎁 Indicações</button>' +
+    '</div>' +
+
+    '<div class="tab-content active" id="tab-apostas">' +
+      '<table class="bets-table">' +
+        '<thead><tr><th>Mercado</th><th>Lado</th><th>Valor</th><th>Status</th><th>P&L</th></tr></thead>' +
+        '<tbody>' + betsRows + '</tbody>' +
+      '</table>' +
+    '</div>' +
+
+    '<div class="tab-content" id="tab-pnl">' + pnlCards + '</div>' +
+
+    '<div class="tab-content" id="tab-depositos">' + depRows + '</div>' +
+
+    '<div class="tab-content" id="tab-editar">' +
+      '<div class="edit-card">' +
+        '<div class="form-group"><label class="form-label">Nome de usuário</label><input class="form-input" id="editName" value="' + u.name + '"></div>' +
+        '<div class="form-group"><label class="form-label">Email</label><input class="form-input" value="' + u.email + '" disabled style="opacity:0.5"></div>' +
+        '<div style="border-top:1px solid var(--border);padding-top:20px;margin-top:4px">' +
+          '<div class="form-group"><label class="form-label">Nova senha</label><input class="form-input" type="password" id="editPass" placeholder="Deixe em branco para manter"></div>' +
+          '<div class="form-group"><label class="form-label">Confirmar nova senha</label><input class="form-input" type="password" id="editPassConfirm" placeholder="Repita a nova senha"></div>' +
+        '</div>' +
+        '<button class="btn-save" onclick="saveProfile()">Salvar alterações</button>' +
+        '<div class="form-feedback" id="editFeedback"></div>' +
+      '</div>' +
+    '</div>' +
+
+    '<div class="tab-content" id="tab-seguranca">' +
+      '<div class="edit-card">' +
+        '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">' +
+          '<div>' +
+            '<div style="font-weight:600;margin-bottom:4px">Verificação em duas etapas</div>' +
+            '<div style="font-size:0.85rem;color:var(--muted)">Receba um código no email a cada login.</div>' +
+          '</div>' +
+          '<span style="margin-left:16px;padding:4px 12px;border-radius:100px;font-size:0.75rem;font-weight:600;background:' + (u.two_fa_enabled ? 'rgba(0,230,118,0.12);color:var(--green)' : 'rgba(90,104,120,0.2);color:var(--muted)') + '">' + (u.two_fa_enabled ? 'Ativado' : 'Desativado') + '</span>' +
+        '</div>' +
+        (u.two_fa_enabled
+          ? '<button class="btn-save" style="background:var(--red);color:#fff;margin-top:16px" onclick="disable2faPrompt()">Desativar 2FA</button>'
+          : '<button class="btn-save" style="margin-top:16px" onclick="enable2fa()">Ativar 2FA</button>') +
+        '<div id="twoFaStep2" style="display:none;margin-top:16px">' +
+          '<div style="font-size:0.85rem;color:var(--muted);margin-bottom:8px">Digite o código enviado para o seu email:</div>' +
+          '<input class="form-input" type="text" id="twoFaCode" placeholder="Código de 6 dígitos" maxlength="6" inputmode="numeric">' +
+          '<button class="btn-save" style="margin-top:10px" onclick="verify2faEnable()">Confirmar ativação</button>' +
+        '</div>' +
+        '<div id="twoFaDisableStep" style="display:none;margin-top:16px">' +
+          '<div style="font-size:0.85rem;color:var(--muted);margin-bottom:8px">Confirme sua senha para desativar:</div>' +
+          '<input class="form-input" type="password" id="twoFaDisablePass" placeholder="Sua senha atual">' +
+          '<button class="btn-save" style="background:var(--red);color:#fff;margin-top:10px" onclick="disable2fa()">Confirmar desativação</button>' +
+        '</div>' +
+        '<div id="twoFaFeedback" style="margin-top:10px;font-size:0.85rem"></div>' +
+      '</div>' +
+    '</div>' +
+
+    // BUG FIX 1: tab-indicacoes agora existe no HTML com sec-indicacoes dentro
+    '<div class="tab-content" id="tab-indicacoes">' +
+      '<div id="sec-indicacoes"><div style="text-align:center;padding:40px;color:var(--muted)">Clique na aba para carregar...</div></div>' +
+    '</div>';
+
+  document.getElementById('pageContent').innerHTML = html;
+  updateAuthUI();
+}
+
+async function saveProfile() {
+  var name = document.getElementById('editName').value.trim();
+  var pass = document.getElementById('editPass').value;
+  var passConfirm = document.getElementById('editPassConfirm').value;
+  var fb = document.getElementById('editFeedback');
+
+  if (!name) { fb.style.color = 'var(--red)'; fb.textContent = 'Nome não pode ser vazio.'; return; }
+  if (pass && pass !== passConfirm) { fb.style.color = 'var(--red)'; fb.textContent = 'Senhas não coincidem.'; return; }
+
+  fb.style.color = 'var(--muted)'; fb.textContent = 'Salvando...';
+
+  try {
+    var body = { name: name };
+    if (pass) body.password = pass;
+    var data = await apiPatch('/auth/profile', body, state.token);
+    if (data.error) { fb.style.color = 'var(--red)'; fb.textContent = 'Erro: ' + data.error; return; }
+    state.user.name = name;
+    fb.style.color = 'var(--green)'; fb.textContent = 'Perfil atualizado!';
+    showToast('Perfil atualizado!');
+    updateAuthUI();
+  } catch(e) {
+    fb.style.color = 'var(--red)'; fb.textContent = 'Erro de conexão.';
+  }
+}
+
+function updateAuthUI() {
+  var area = document.getElementById('authArea');
+  if (state.user) {
+    area.innerHTML = '<div class="user-chip">' +
+      '<div class="user-avatar">' + state.user.name.slice(0,2).toUpperCase() + '</div>' +
+      '<span>' + state.user.name + '</span>' +
+      '<span style="color:var(--green);font-family:DM Mono,monospace;font-size:0.8rem;margin-left:4px">R$' + parseFloat(state.user.balance || 0).toFixed(0) + '</span>' +
+      '</div>';
+  }
+}
+
+var _login2faEmail = null;
+async function doLogin() {
+  var email = document.getElementById('loginEmail').value;
+  var pass = document.getElementById('loginPass').value;
+  try {
+    var data = await apiPost('/auth/login', { email, password: pass });
+    if (data.error) { showToast('Erro: ' + data.error); return; }
+    if (data.requires_2fa) {
+      _login2faEmail = data.email;
+      document.getElementById('loginStep1').style.display = 'none';
+      document.getElementById('loginStep2').style.display = '';
+      document.getElementById('login2faCode').value = '';
+      document.getElementById('login2faCode').focus();
+      showToast('Código enviado para o email');
+      return;
+    }
+    _finishLogin(data);
+  } catch(e) { showToast('Erro de conexão'); }
+}
+
+async function doLogin2fa() {
+  var code = document.getElementById('login2faCode').value.trim();
+  if (!code) { showToast('Informe o código'); return; }
+  try {
+    var data = await apiPost('/auth/login/2fa', { email: _login2faEmail, code });
+    if (data.error) { showToast('Código inválido: ' + data.error); return; }
+    _finishLogin(data);
+  } catch(e) { showToast('Erro de conexão'); }
+}
+
+function _finishLogin(data) {
+  state.user = data.user;
+  state.token = data.token;
+  localStorage.setItem('preditivo_token', data.token);
+  closeModal('loginModal');
+  document.getElementById('loginStep1').style.display = '';
+  document.getElementById('loginStep2').style.display = 'none';
+  _login2faEmail = null;
+  loadProfile();
+}
+
+async function loadProfile() {
+  try {
+    var me = await apiGet('/auth/me', state.token);
+    if (!me || !me.id) { openModal('loginModal'); return; }
+    state.user = me;
+
+    var bets = await apiGet('/bets/my', state.token);
+    state.bets = Array.isArray(bets) ? bets : [];
+
+    var deps = await apiGet('/deposits/my', state.token);
+    state.deposits = Array.isArray(deps) ? deps : [];
+
+    renderPage();
+  } catch(e) {
+    document.getElementById('pageContent').innerHTML = '<div style="text-align:center;padding:80px;color:var(--muted)">Erro ao carregar perfil.</div>';
+  }
+}
+
+async function init() {
+  var savedToken = localStorage.getItem('preditivo_token');
+  if (!savedToken) { openModal('loginModal'); return; }
+  state.token = savedToken;
+  await loadProfile();
+}
+
+init();
+
+function loadIndicacoes() {
+  var section = document.getElementById('sec-indicacoes');
+  if (!section) return;
+  section.innerHTML = '<div style="text-align:center;padding:40px;color:#5a6878">Carregando...</div>';
+
+  // BUG FIX 2: era "token" (undefined), agora é "state.token"
+  fetch(API + '/referrals/me', { headers: { 'Authorization': 'Bearer ' + state.token } })
+    .then(function(r){ return r.json(); })
+    .then(function(data) {
+      if (data.error) { section.innerHTML = '<p style="color:#ff4757">Erro: ' + data.error + '</p>'; return; }
+      var link = window.location.origin + '?ref=' + data.referral_code;
+      section.innerHTML =
+        '<div style="background:linear-gradient(135deg,rgba(0,153,116,0.15),rgba(0,200,110,0.05));border:1px solid var(--green);border-radius:16px;padding:24px;margin-bottom:24px">' +
+          '<div style="font-size:0.8rem;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px">Seu link de indicação</div>' +
+          '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">' +
+            '<input id="refLink" value="'+link+'" readonly style="flex:1;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 14px;color:var(--text);font-size:0.85rem;font-family:monospace;min-width:0">' +
+            '<button onclick="copyRefLink()" style="padding:10px 18px;background:var(--green);color:#000;border:none;border-radius:8px;font-weight:700;cursor:pointer;white-space:nowrap">Copiar</button>' +
+          '</div>' +
+          '<div style="margin-top:12px;font-size:0.82rem;color:var(--muted)">Compartilhe e ganhe <strong style="color:var(--green)">R$50</strong> quando seu amigo depositar R$100+. Seu amigo ganha <strong style="color:var(--green)">R$20</strong>.</div>' +
+        '</div>' +
+        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:24px">' +
+          '<div style="background:var(--surface2);border-radius:12px;padding:16px;text-align:center">' +
+            '<div style="font-size:1.6rem;font-weight:700;color:var(--green)">R$' + parseFloat(data.total_earned).toFixed(0) + '</div>' +
+            '<div style="font-size:0.78rem;color:var(--muted);margin-top:4px">Total ganho em bônus</div>' +
+          '</div>' +
+          '<div style="background:var(--surface2);border-radius:12px;padding:16px;text-align:center">' +
+            '<div style="font-size:1.6rem;font-weight:700;color:#ffc107">R$' + parseFloat(data.bonus_balance).toFixed(0) + '</div>' +
+            '<div style="font-size:0.78rem;color:var(--muted);margin-top:4px">Saldo bônus disponível</div>' +
+          '</div>' +
+        '</div>' +
+        '<div style="font-size:0.9rem;font-weight:600;margin-bottom:12px">Histórico de indicações</div>' +
+        (data.referrals.length === 0
+          ? '<div style="text-align:center;padding:32px;color:#5a6878;font-size:0.88rem">Nenhuma indicação ainda. Compartilhe seu link!</div>'
+          : '<table style="width:100%;border-collapse:collapse">' +
+              '<thead><tr>' +
+                '<th style="text-align:left;padding:8px;color:var(--muted);font-size:0.78rem;font-weight:500;border-bottom:1px solid var(--border)">Usuário</th>' +
+                '<th style="text-align:left;padding:8px;color:var(--muted);font-size:0.78rem;font-weight:500;border-bottom:1px solid var(--border)">Tipo</th>' +
+                '<th style="text-align:right;padding:8px;color:var(--muted);font-size:0.78rem;font-weight:500;border-bottom:1px solid var(--border)">Bônus</th>' +
+                '<th style="text-align:right;padding:8px;color:var(--muted);font-size:0.78rem;font-weight:500;border-bottom:1px solid var(--border)">Data</th>' +
+              '</tr></thead>' +
+              '<tbody>' +
+              data.referrals.map(function(r) {
+                return '<tr>' +
+                  '<td style="padding:10px 8px;font-size:0.85rem">' + (r.referred_username || '-') + '</td>' +
+                  '<td style="padding:10px 8px;font-size:0.82rem;color:var(--muted)">' + (r.type === 'deposit' ? '✅ Depósito confirmado' : '📝 Cadastro') + '</td>' +
+                  '<td style="padding:10px 8px;text-align:right;color:var(--green);font-weight:600">+R$' + parseFloat(r.referrer_amount).toFixed(0) + '</td>' +
+                  '<td style="padding:10px 8px;text-align:right;color:var(--muted);font-size:0.8rem">' + new Date(r.created_at).toLocaleDateString('pt-BR') + '</td>' +
+                  '</tr>';
+              }).join('') +
+              '</tbody></table>'
+        );
+    })
+    .catch(function(e){ section.innerHTML = '<p style="color:#ff4757">Erro de conexão</p>'; });
+}
+
+function copyRefLink() {
+  var input = document.getElementById('refLink');
+  input.select();
+  document.execCommand('copy');
+  showToast('Link copiado!');
+}
+
+// ---- 2FA ----
+async function enable2fa() {
+  var fb = document.getElementById('twoFaFeedback');
+  fb.textContent = 'Enviando código...'; fb.style.color = 'var(--muted)';
+  try {
+    var data = await apiPost('/auth/2fa/enable', {}, state.token);
+    if (data.error) { fb.style.color='var(--red)'; fb.textContent='Erro: '+data.error; return; }
+    fb.textContent = 'Código enviado! Verifique seu email.'; fb.style.color='var(--green)';
+    document.getElementById('twoFaStep2').style.display = '';
+    document.getElementById('twoFaCode').focus();
+  } catch(e) { fb.style.color='var(--red)'; fb.textContent='Erro de conexão.'; }
+}
+
+async function verify2faEnable() {
+  var code = document.getElementById('twoFaCode').value.trim();
+  var fb = document.getElementById('twoFaFeedback');
+  if (!code) { fb.style.color='var(--red)'; fb.textContent='Informe o código.'; return; }
+  try {
+    var data = await apiPost('/auth/2fa/enable/verify', { code }, state.token);
+    if (data.error) { fb.style.color='var(--red)'; fb.textContent='Erro: '+data.error; return; }
+    state.user.two_fa_enabled = true;
+    showToast('2FA ativado com sucesso!');
+    renderPage();
+    switchTab('seguranca');
+  } catch(e) { fb.style.color='var(--red)'; fb.textContent='Erro de conexão.'; }
+}
+
+function disable2faPrompt() {
+  document.getElementById('twoFaDisableStep').style.display = '';
+  document.getElementById('twoFaDisablePass').focus();
+}
+
+async function disable2fa() {
+  var password = document.getElementById('twoFaDisablePass').value;
+  var fb = document.getElementById('twoFaFeedback');
+  if (!password) { fb.style.color='var(--red)'; fb.textContent='Informe a senha.'; return; }
+  try {
+    var data = await apiPost('/auth/2fa/disable', { password }, state.token);
+    if (data.error) { fb.style.color='var(--red)'; fb.textContent='Erro: '+data.error; return; }
+    state.user.two_fa_enabled = false;
+    showToast('2FA desativado.');
+    renderPage();
+    switchTab('seguranca');
+  } catch(e) { fb.style.color='var(--red)'; fb.textContent='Erro de conexão.'; }
+}
+
+</script>
+</body>
+</html>

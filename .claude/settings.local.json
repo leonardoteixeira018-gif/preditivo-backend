@@ -1,0 +1,35 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(gh repo:*)",
+      "WebFetch(domain:api.github.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "WebSearch",
+      "Bash(curl -s https://preditivo-backend-production.up.railway.app/markets)",
+      "Bash(python3 -c \"import json,sys; markets=json.load\\(sys.stdin\\); [print\\(f''''{m[\"\"id\"\"][:8]}... | {m[\"\"status\"\"][:8]} | {m[\"\"category\"\"]} | {m[\"\"title\"\"]}''''\\) for m in markets]\")",
+      "Bash(node -e \"const d=require\\(''''fs''''\\).readFileSync\\(''''/dev/stdin'''',''''utf8''''\\); const m=JSON.parse\\(d\\); m.forEach\\(x=>console.log\\(x.id.slice\\(0,8\\),''''|'''',x.status,''''|'''',x.category,''''|'''',x.title\\)\\)\")",
+      "Bash(ADMIN_SECRET=\"Prd2026!xK9mN3qR7vT\")",
+      "Bash(API=\"https://preditivo-backend-production.up.railway.app\")",
+      "Bash(__NEW_LINE_195c07f7a1c9bced__ curl:*)",
+      "Bash(API=\"https://preditivo-backend-production.up.railway.app\" ADMIN_SECRET=\"Prd2026!xK9mN3qR7vT\" __NEW_LINE_ac3b8826a064b868__ echo \"=== Ranking ===\" curl -s \"$API/ranking\" __NEW_LINE_ac3b8826a064b868__ echo \"\" echo \"=== Receita ===\" curl -s \"$API/admin/receita\" -H \"x-admin-secret: $ADMIN_SECRET\")",
+      "Bash(curl -s \"https://preditivo-backend-production.up.railway.app/ranking\")",
+      "Bash(curl -s \"https://preditivo-backend-production.up.railway.app/admin/receita\" -H \"x-admin-secret: Prd2026!xK9mN3qR7vT\")",
+      "Bash(curl -s \"https://preditivo-backend-production.up.railway.app/markets/e21f0e15-4080-451f-8cb2-1acacc4ac918\")",
+      "mcp__mcp-registry__search_mcp_registry",
+      "Bash(gh pr:*)",
+      "Read(//usr/local/bin/**)",
+      "Read(//c/Users/SAMSUNG/.local/bin/**)",
+      "Read(//c//**)",
+      "Bash(curl -s https://preditivo-backend-production.up.railway.app/admin/users -H \"x-admin-secret: Prd2026!xK9mN3qR7vT\")",
+      "Bash(python3 -c \":*)",
+      "Read(//tmp/**)",
+      "Bash(ls /c/Python*)",
+      "Read(//c/Users/SAMSUNG/AppData/Local/Programs/**)",
+      "Bash(chmod +x /tmp/place_bets.sh)",
+      "Bash(bash /tmp/place_bets.sh)",
+      "Bash(API=\"https://preditivo-backend-production.up.railway.app\" curl -s \"$API/markets/98a0b7af-521a-40d1-9a6b-3eeb63dc712c\")",
+      "Bash(curl -s \"$API/markets/98a0b7af-521a-40d1-9a6b-3eeb63dc712c\")",
+      "mcp__54799777-1049-4e63-a9b3-5b5155ff4309__execute_sql"
+    ]
+  }
+}
