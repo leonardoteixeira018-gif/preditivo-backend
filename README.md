@@ -30,11 +30,11 @@ O produto atual e uma plataforma web centralizada com operacao assistida por pai
 
 ### 1. Banco de dados
 1. Crie um projeto no [Supabase](https://supabase.com).
-2. No SQL Editor, rode [`src/sql/schema.sql`](C:/Users/SAMSUNG/OneDrive/Desktop/mercado%20preditivo/preditivo-backend/src/sql/schema.sql).
+2. No SQL Editor, rode [`src/sql/schema.sql`](src/sql/schema.sql).
 3. Copie a connection string PostgreSQL para `DATABASE_URL`.
 
 ### 2. Variaveis de ambiente
-Copie [`.env.example`](C:/Users/SAMSUNG/OneDrive/Desktop/mercado%20preditivo/preditivo-backend/.env.example) para `.env` e preencha os campos necessarios.
+Copie [`.env.example`](.env.example) para `.env` e preencha os campos necessarios.
 
 Variaveis principais:
 - `DATABASE_URL`
