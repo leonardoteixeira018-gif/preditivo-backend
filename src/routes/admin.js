@@ -399,6 +399,44 @@ router.get('/users', async (req, res) => {
   }
 });
 
+// POST /admin/balance — ajusta ou define o saldo de qualquer usuário
+// mode "set"   → define o saldo exatamente para `amount`
+// mode "delta" (padrão) → adiciona/subtrai `amount` ao saldo atual
+router.post('/balance', async (req, res) => {
+  const { user_id, amount, mode } = req.body;
+  if (!user_id || amount === undefined || amount === null) {
+    return res.status(400).json({ error: 'user_id e amount são obrigatórios' });
+  }
+  const amt = parseFloat(amount);
+  if (!Number.isFinite(amt)) {
+    return res.status(400).json({ error: 'amount inválido' });
+  }
+
+  try {
+    let result;
+    if (mode === 'set') {
+      if (amt < 0) return res.status(400).json({ error: 'Saldo não pode ser negativo' });
+      result = await pool.query(
+        'UPDATE users SET balance = $1 WHERE id = $2 RETURNING id, username, balance',
+        [amt, user_id]
+      );
+    } else {
+      // delta: adiciona (ou subtrai se negativo), nunca abaixo de 0
+      result = await pool.query(
+        'UPDATE users SET balance = GREATEST(0, COALESCE(balance, 0) + $1) WHERE id = $2 RETURNING id, username, balance',
+        [amt, user_id]
+      );
+    }
+    if (!result.rows.length) {
+      return res.status(404).json({ error: 'Usuário não encontrado' });
+    }
+    const row = result.rows[0];
+    res.json({ ok: true, user_id: row.id, username: row.username, new_balance: parseFloat(row.balance) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.post('/markets/:id/resolve', async (req, res) => {
   const client = await pool.connect();
 
