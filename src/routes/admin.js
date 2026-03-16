@@ -400,8 +400,9 @@ router.get('/users', async (req, res) => {
 });
 
 // POST /admin/balance — ajusta ou define o saldo de qualquer usuário
-// mode "set"   → define o saldo exatamente para `amount`
+// mode "set"   → define o saldo exatamente para `amount` (usado para bots)
 // mode "delta" (padrão) → adiciona/subtrai `amount` ao saldo atual
+// v2: validação reforçada
 router.post('/balance', async (req, res) => {
   const { user_id, amount, mode } = req.body;
   if (!user_id || amount === undefined || amount === null) {
