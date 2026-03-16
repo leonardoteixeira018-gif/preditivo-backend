@@ -558,7 +558,7 @@ router.get('/bots/stats', async (req, res) => {
       SELECT m.title, m.category,
         COUNT(b.id) as bot_bets,
         COALESCE(SUM(b.amount),0) as bot_volume,
-        ROUND((m.q_yes::numeric / (m.q_yes::numeric + m.q_no::numeric) * 100), 1) as prob_yes
+        ROUND((m.q_yes::numeric / NULLIF(m.q_yes::numeric + m.q_no::numeric, 0) * 100), 1) as prob_yes
       FROM markets m
       LEFT JOIN bets b ON b.market_id = m.id
         AND b.user_id IN (SELECT id FROM users WHERE COALESCE(is_bot,false)=true)
