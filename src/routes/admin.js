@@ -962,6 +962,32 @@ router.post('/bots/disable', async (req, res) => {
   res.json({ ok: true, message: 'Bot automatico desativado', config });
 });
 
+// POST /admin/bots/reload-balances — define o saldo de TODOS os bots em uma única operação SQL
+// Substitui o padrão anterior de N requests paralelos (um por bot)
+router.post('/bots/reload-balances', async (req, res) => {
+  const { amount } = req.body;
+  const amt = parseFloat(amount);
+  if (!amt || amt < 0 || !Number.isFinite(amt)) {
+    return res.status(400).json({ error: 'amount deve ser um número positivo' });
+  }
+  try {
+    const result = await pool.query(
+      `UPDATE users SET balance = $1 WHERE COALESCE(is_bot, false) = true RETURNING id, username, balance`,
+      [amt]
+    );
+    res.json({
+      ok: true,
+      updated: result.rowCount,
+      amount: amt,
+      bots: result.rows.map(function(r) {
+        return { id: r.id, username: r.username, balance: parseFloat(r.balance) };
+      })
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Exporta runBotRound para uso no cron do servidor
 module.exports = router;
 module.exports.runBotRound = runBotRound;
