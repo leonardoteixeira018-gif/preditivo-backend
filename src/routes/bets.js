@@ -1,8 +1,10 @@
 const router = require('express').Router();
 const pool = require('../lib/db');
 const auth = require('../middleware/auth');
+const cache = require('../lib/cache');
 
 const TAXA_CASA = 0.02;
+const CACHE_KEY_RANKING = 'ranking:list';
 
 router.post('/', auth, async (req, res) => {
   const client = await pool.connect();
@@ -110,6 +112,8 @@ router.post('/', auth, async (req, res) => {
     );
 
     await client.query('COMMIT');
+
+    cache.del(CACHE_KEY_RANKING); // Aposta muda o ranking de volume
 
     const newBalance = parseFloat(user.rows[0].balance) - amt;
 
@@ -226,6 +230,8 @@ router.post('/sell', auth, async (req, res) => {
 
     await pool.query('COMMIT');
 
+    cache.del(CACHE_KEY_RANKING); // Venda também altera o ranking
+
     const userQ = await pool.query('SELECT balance FROM users WHERE id = $1', [req.user.id]);
     res.json({
       ok: true,
@@ -244,21 +250,51 @@ router.post('/sell', auth, async (req, res) => {
 router.get('/quote', async (req, res) => {
   try {
     const { market_id, side, amount } = req.query;
+
+    if (!['yes', 'no'].includes(side)) {
+      return res.status(400).json({ error: 'side deve ser yes ou no' });
+    }
+    const amt = parseFloat(amount);
+    if (!amt || amt <= 0 || !Number.isFinite(amt)) {
+      return res.status(400).json({ error: 'amount inválido' });
+    }
+
     const market = await pool.query('SELECT * FROM markets WHERE id = $1', [market_id]);
     if (!market.rows.length) return res.status(404).json({ error: 'Mercado nao encontrado' });
 
-    const marketRow = market.rows[0];
-    const total = parseFloat(marketRow.q_yes) + parseFloat(marketRow.q_no);
-    const prob = side === 'yes'
-      ? parseFloat(marketRow.q_yes) / total
-      : parseFloat(marketRow.q_no) / total;
-    const amountLiquido = parseFloat(amount) * (1 - TAXA_CASA);
-    const payout = (amountLiquido / prob).toFixed(2);
+    const m = market.rows[0];
+    if (m.resolved_at) return res.status(400).json({ error: 'Mercado já resolvido' });
+    if (m.ends_at && new Date() > new Date(m.ends_at)) {
+      return res.status(400).json({ error: 'Mercado expirado' });
+    }
+
+    const qYes = parseFloat(m.q_yes);
+    const qNo = parseFloat(m.q_no);
+    const total = qYes + qNo;
+
+    // Prob atual (antes da compra)
+    const currentProb = side === 'yes' ? qYes / total : qNo / total;
+
+    // Prob simulada após a compra
+    const newTotal = total + amt;
+    const newQ = side === 'yes' ? qYes + amt : qNo + amt;
+    const afterProb = newQ / newTotal;
+
+    // Slippage = variação percentual da prob causada pela compra
+    const slippagePct = Math.abs(afterProb - currentProb) / currentProb * 100;
+
+    const taxa = amt * TAXA_CASA;
+    const amountLiquido = amt - taxa;
+    const payout = (amountLiquido / afterProb).toFixed(2);
 
     res.json({
-      prob: (prob * 100).toFixed(1),
+      prob: (currentProb * 100).toFixed(1),
+      prob_after: (afterProb * 100).toFixed(1),
+      slippage_pct: slippagePct.toFixed(2),
+      slippage_warning: slippagePct > 5,
       payout,
-      taxa: (parseFloat(amount) * TAXA_CASA).toFixed(2)
+      taxa: taxa.toFixed(2),
+      amount_liquid: amountLiquido.toFixed(2)
     });
   } catch (err) {
     res.status(500).json({ error: err.message });

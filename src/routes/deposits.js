@@ -1,7 +1,51 @@
+const crypto = require('crypto');
+const rateLimit = require('express-rate-limit');
 const router = require('express').Router();
 const pool = require('../lib/db');
 const auth = require('../middleware/auth');
 const { createCheckoutLink } = require('../lib/infinitepay');
+
+const webhookLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 60,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Limite de webhooks excedido' }
+});
+
+function verifyInfinitePaySignature(req) {
+  const secret = process.env.INFINITEPAY_WEBHOOK_SECRET;
+  // Se não configurado, apenas loga aviso (modo permissivo para não quebrar em dev)
+  if (!secret) {
+    console.warn('[WEBHOOK] INFINITEPAY_WEBHOOK_SECRET não configurada — validação ignorada');
+    return true;
+  }
+
+  const signature =
+    req.headers['x-infinitepay-signature'] ||
+    req.headers['x-signature'] ||
+    req.headers['x-hmac-sha256'];
+
+  if (!signature) {
+    console.warn('[WEBHOOK] Header de assinatura ausente');
+    return false;
+  }
+
+  const rawBody = JSON.stringify(req.body);
+  const expected = crypto
+    .createHmac('sha256', secret)
+    .update(rawBody)
+    .digest('hex');
+
+  try {
+    return crypto.timingSafeEqual(
+      Buffer.from(signature.replace(/^sha256=/, '')),
+      Buffer.from(expected)
+    );
+  } catch {
+    return false;
+  }
+}
 
 const REFERRAL_MIN_DEPOSIT = 100;
 const REFERRER_BONUS = 50;
@@ -40,10 +84,15 @@ function extractInfinitePayWebhook(body) {
   };
 }
 
-router.post('/infinitepay/webhook', async (req, res) => {
+router.post('/infinitepay/webhook', webhookLimiter, async (req, res) => {
   const client = await pool.connect();
 
   try {
+    if (!verifyInfinitePaySignature(req)) {
+      console.warn(`[SECURITY] Webhook com assinatura inválida rejeitado — IP: ${req.ip}`);
+      return res.status(401).json({ error: 'Assinatura inválida' });
+    }
+
     const event = extractInfinitePayWebhook(req.body || {});
     if (!event.orderNsu) {
       return res.status(400).json({ error: 'order_nsu ausente' });

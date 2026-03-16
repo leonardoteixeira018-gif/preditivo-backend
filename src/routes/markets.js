@@ -3,6 +3,9 @@ const pool = require('../lib/db');
 const adminAuth = require('../middleware/adminAuth');
 const { sendEmail } = require('../lib/email');
 const { APP_URL, APP_BRAND, ADMIN_EMAIL } = require('../lib/appConfig');
+const cache = require('../lib/cache');
+
+const CACHE_KEY_LIST = 'markets:list';
 
 router.get('/stats', async (req, res) => {
   try {
@@ -22,7 +25,11 @@ router.get('/stats', async (req, res) => {
 
 router.get('/', async (req, res) => {
   try {
+    const cached = cache.get(CACHE_KEY_LIST);
+    if (cached) return res.json(cached);
+
     const result = await pool.query('SELECT * FROM markets ORDER BY created_at DESC');
+    cache.set(CACHE_KEY_LIST, result.rows, 30_000); // TTL 30s
     res.json(result.rows);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -62,6 +69,7 @@ router.post('/', adminAuth, async (req, res) => {
       [title, description || null, category || 'politica', marketEndsAt, image_url || null]
     );
 
+    cache.del(CACHE_KEY_LIST); // Invalida cache ao criar novo mercado
     res.json(result.rows[0]);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -101,6 +109,10 @@ router.post('/:id/resolve', adminAuth, async (req, res) => {
       'UPDATE markets SET status = $1, resolved_outcome = $2, resolved_at = NOW() WHERE id = $3',
       ['resolved', outcome, m.id]
     );
+
+    // Invalida ambos os caches ao resolver o mercado
+    cache.del(CACHE_KEY_LIST);
+    cache.del('ranking:list');
 
     const winners = await pool.query(
       `SELECT b.*, u.email, u.username
@@ -186,4 +198,35 @@ router.post('/:id/resolve', adminAuth, async (req, res) => {
   }
 });
 
+async function closeExpiredMarkets() {
+  const result = await pool.query(`
+    UPDATE markets
+    SET status = 'closed'
+    WHERE status = 'open'
+      AND ends_at < NOW()
+      AND resolved_at IS NULL
+    RETURNING id, title
+  `);
+  if (result.rows.length > 0) {
+    console.log(JSON.stringify({
+      ts: new Date().toISOString(),
+      level: 'INFO',
+      msg: `${result.rows.length} mercado(s) fechado(s) por expiração`,
+      markets: result.rows.map(m => m.title)
+    }));
+  }
+  return result.rows.length;
+}
+
+router.post('/close-expired', adminAuth, async (req, res) => {
+  try {
+    const count = await closeExpiredMarkets();
+    if (count > 0) cache.del(CACHE_KEY_LIST);
+    res.json({ ok: true, closed_count: count });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;
+module.exports.closeExpiredMarkets = closeExpiredMarkets;

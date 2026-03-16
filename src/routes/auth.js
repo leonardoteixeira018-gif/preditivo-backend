@@ -332,6 +332,9 @@ router.post('/reset-password', async (req, res) => {
     if (!normalizedEmail || !code || !password) {
       return res.status(400).json({ error: 'Email, codigo e senha sao obrigatorios' });
     }
+    if (String(password).length < 6) {
+      return res.status(400).json({ error: 'Senha deve ter no minimo 6 caracteres' });
+    }
 
     await client.query('BEGIN');
     const verification = await consumeEmailVerification({
@@ -344,6 +347,17 @@ router.post('/reset-password', async (req, res) => {
     const hash = await bcrypt.hash(password, 10);
     await client.query('UPDATE users SET password_hash = $1 WHERE id = $2', [hash, verification.user_id]);
     await client.query('COMMIT');
+
+    const { sendEmail } = require('../lib/email');
+    await sendEmail(
+      normalizedEmail,
+      `Senha redefinida — ${APP_BRAND}`,
+      `<div style="font-family:Arial,sans-serif;max-width:520px;margin:0 auto;padding:24px">
+        <h2>Senha redefinida com sucesso</h2>
+        <p>Voce ja pode fazer login com a nova senha.</p>
+        <p style="color:#888;font-size:14px">Se nao foi voce, entre em contato com o suporte imediatamente.</p>
+      </div>`
+    );
 
     res.json({ ok: true, message: 'Senha atualizada com sucesso' });
   } catch (err) {

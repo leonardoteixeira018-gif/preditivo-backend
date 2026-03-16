@@ -8,12 +8,13 @@ app.set('trust proxy', 1); // Confia no primeiro proxy (Railway/Vercel)
 
 const pool = require('./lib/db');
 const { APP_URL } = require('./lib/appConfig');
+const requestLogger = require('./middleware/requestLogger');
 
 const appOrigin = new URL(APP_URL).origin;
 const altOrigin = appOrigin.includes('://www.')
   ? appOrigin.replace('://www.', '://')
   : appOrigin.replace('://', '://www.');
-const allowedOrigins = [appOrigin, altOrigin, 'http://localhost:3000'];
+const allowedOrigins = [appOrigin, altOrigin, 'http://localhost:3000', 'http://localhost:8000'];
 
 app.use(cors({
   origin(origin, callback) {
@@ -26,11 +27,12 @@ app.use(cors({
 }));
 
 app.use(express.json());
+app.use(requestLogger);
 
 // Limitadores de taxa
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutos
-  max: 15, // limite de 15 requisições por IP
+  max: 15,
   message: { error: 'Muitas tentativas. Tente novamente em 15 minutos.' },
   standardHeaders: true,
   legacyHeaders: false,
@@ -38,7 +40,7 @@ const authLimiter = rateLimit({
 
 const generalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 150, // 150 requisições por 15 minutos
+  max: 150,
   message: { error: 'Limite de requisições excedido. Tente novamente mais tarde.' },
   standardHeaders: true,
   legacyHeaders: false,
@@ -61,17 +63,36 @@ app.use('/referrals', require('./routes/referrals'));
 app.use('/admin', require('./routes/admin'));
 app.use('/transak', require('./routes/transak'));
 
-app.get('/health', (req, res) => res.json({ status: 'ok', timestamp: new Date() }));
+app.get('/health', async (req, res) => {
+  try {
+    await pool.query('SELECT 1');
+    res.json({
+      status: 'ok',
+      timestamp: new Date().toISOString(),
+      uptime_s: Math.floor(process.uptime()),
+      db: 'connected'
+    });
+  } catch (err) {
+    res.status(503).json({
+      status: 'error',
+      timestamp: new Date().toISOString(),
+      db: 'disconnected',
+      error: err.message
+    });
+  }
+});
+
 app.use((req, res) => res.status(404).json({ error: 'Rota nao encontrada' }));
 app.use((err, req, res, next) => {
-  console.error(err.stack);
+  console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'ERROR', msg: err.message, stack: err.stack }));
   res.status(500).json({ error: 'Erro interno do servidor' });
 });
 
 const PORT = process.env.PORT || 3000;
 
 app.listen(PORT, async () => {
-  console.log(`Servidor rodando na porta ${PORT}`);
+  console.log(JSON.stringify({ ts: new Date().toISOString(), level: 'INFO', msg: `Servidor rodando na porta ${PORT}` }));
+
   await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS is_bot BOOLEAN DEFAULT false').catch(() => {});
   await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS rank_total_bets INTEGER').catch(() => {});
   await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS rank_profit DECIMAL(18,2)').catch(() => {});
@@ -111,8 +132,19 @@ app.listen(PORT, async () => {
     )
   `).catch(() => {});
 
+  // Índices adicionais para queries críticas
+  await pool.query('CREATE INDEX IF NOT EXISTS idx_bets_user_market ON bets(user_id, market_id)').catch(() => {});
+  await pool.query('CREATE INDEX IF NOT EXISTS idx_bets_status_market ON bets(market_id, status)').catch(() => {});
+  await pool.query('CREATE INDEX IF NOT EXISTS idx_deposits_user_status ON deposits(user_id, status)').catch(() => {});
+
+  // Auto-fechar mercados expirados a cada 5 minutos
+  const { closeExpiredMarkets } = require('./routes/markets');
+  setInterval(() => closeExpiredMarkets().catch(err =>
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'ERROR', msg: 'closeExpiredMarkets', error: err.message }))
+  ), 5 * 60 * 1000);
+
   const { runBotRound, getBotConfig } = require('./routes/admin');
-  console.log('Bot cron iniciado');
+  console.log(JSON.stringify({ ts: new Date().toISOString(), level: 'INFO', msg: 'Bot cron iniciado' }));
 
   setInterval(async () => {
     try {
@@ -127,10 +159,10 @@ app.listen(PORT, async () => {
       });
 
       if (result.bets_placed > 0) {
-        console.log(`Bot: ${result.bets_placed} apostas | vol R$${result.volume}`);
+        console.log(JSON.stringify({ ts: new Date().toISOString(), level: 'INFO', msg: `Bot: ${result.bets_placed} apostas | vol R$${result.volume}` }));
       }
     } catch (err) {
-      console.error('Bot cron error:', err.message);
+      console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'ERROR', msg: 'Bot cron error', error: err.message }));
     }
   }, 30000);
 });

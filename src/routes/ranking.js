@@ -1,5 +1,8 @@
 const router = require('express').Router();
 const pool = require('../lib/db');
+const cache = require('../lib/cache');
+
+const CACHE_KEY = 'ranking:list';
 
 function syntheticRankingProfile(userId, username) {
   const seed = `${userId}:${username || ''}`;
@@ -18,6 +21,9 @@ function syntheticRankingProfile(userId, username) {
 
 router.get('/', async (req, res) => {
   try {
+    const cached = cache.get(CACHE_KEY);
+    if (cached) return res.json(cached);
+
     const result = await pool.query(`
       SELECT
         u.id,
@@ -57,6 +63,7 @@ router.get('/', async (req, res) => {
       };
     }).sort((a, b) => b.total_profit - a.total_profit);
 
+    cache.set(CACHE_KEY, ranking, 60_000); // TTL 60s
     res.json(ranking);
   } catch (err) {
     res.status(500).json({ error: err.message });
