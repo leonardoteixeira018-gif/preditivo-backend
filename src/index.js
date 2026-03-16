@@ -46,11 +46,21 @@ const generalLimiter = rateLimit({
   legacyHeaders: false,
 });
 
+// Limiter dedicado para admin — muito mais permissivo (já protegido por adminAuth)
+const adminLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 2000,
+  message: { error: 'Limite de requisições admin excedido. Tente novamente mais tarde.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
 // Aplicar limitadores
 app.use('/auth/login', authLimiter);
 app.use('/auth/register', authLimiter);
 app.use('/auth/forgot-password', authLimiter);
 app.use('/auth/reset-password', authLimiter);
+app.use('/admin', adminLimiter);  // admin tem limite próprio mais alto
 app.use(generalLimiter);
 
 app.use('/auth', require('./routes/auth'));
