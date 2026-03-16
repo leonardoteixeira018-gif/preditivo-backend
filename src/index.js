@@ -30,26 +30,29 @@ app.use(express.json());
 app.use(requestLogger);
 
 // Limitadores de taxa
+// authLimiter: protege rotas sensíveis de login/registro contra força bruta
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutos
-  max: 15,
+  max: 20,
   message: { error: 'Muitas tentativas. Tente novamente em 15 minutos.' },
   standardHeaders: true,
   legacyHeaders: false,
 });
 
+// generalLimiter: proteção básica para rotas públicas
+// 1000 req/15min = ~67 req/min por IP — razoável para uso normal
 const generalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 150,
+  max: 1000,
   message: { error: 'Limite de requisições excedido. Tente novamente mais tarde.' },
   standardHeaders: true,
   legacyHeaders: false,
 });
 
-// Limiter dedicado para admin — muito mais permissivo (já protegido por adminAuth)
+// adminLimiter: admin já protegido por adminAuth, limite alto para operações intensivas
 const adminLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 2000,
+  max: 5000,
   message: { error: 'Limite de requisições admin excedido. Tente novamente mais tarde.' },
   standardHeaders: true,
   legacyHeaders: false,
