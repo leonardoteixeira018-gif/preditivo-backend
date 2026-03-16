@@ -11,18 +11,18 @@ API REST da plataforma de mercados de previsao Bubuya.
 - Railway para deploy
 
 ## Estado atual do produto
-O backend hoje suporta:
-- cadastro com verificacao por email
-- login com JWT
-- listagem e detalhe de mercados
-- apostas e cotacao de apostas
-- ranking publico
-- depositos manuais e checkout via InfinitePay
-- saques com confirmacao por email
-- painel admin para operacao
-- simulacao de bots e separacao entre usuarios reais e artificiais
+O backend e frontend suportam atualmente:
+- Cadastro com verificação por e-mail e login JWT.
+- Listagem e detalhe de mercados com histórico.
+- **Negociação de contratos (Previsões)** com cotações dinâmicas.
+- Ranking público de usuários e performance.
+- Depósitos manuais e **Checkout automatizado via InfinitePay**.
+- Saques com dupla confirmação (E-mail).
+- Painel Admin para gestão de mercados, usuários, receita e simulação de bots.
+- **Integração Web3**: Conexão com MetaMask para futura expansão.
+- **Interface Profissional**: Rodapé institucional e comunicação de "Mercado de Previsão" (não apostas).
 
-O produto atual e uma plataforma web centralizada com operacao assistida por painel admin. Itens de Web3 e smart contracts nao sao prioridade imediata de lancamento.
+O produto atual é uma plataforma web centralizada onde o preço dos contratos reflete as probabilidades do mundo real.
 
 ---
 
@@ -153,15 +153,15 @@ O painel admin cobre operacao de mercados, depositos, saques, receita e bots. As
 
 ---
 
-## Roadmap imediato
-Os proximos passos do produto para lancamento nao sao blockchain. A prioridade agora e operacao estavel.
-
-- [ ] Validar producao ponta a ponta com usuarios reais
-- [ ] Garantir conciliacao confiavel de deposito e saque
-- [ ] Revisar textos, branding e emails em toda a experiencia
-- [ ] Fechar regras e datas dos mercados em destaque
-- [ ] Rodar beta fechado com grupo pequeno
-- [ ] Ajustar monitoramento e rotina diaria de operacao
+- [x] Implementar integração de checkout InfinitePay (Frontend + Backend)
+- [x] Adicionar suporte inicial para carteiras Web3 (MetaMask)
+- [x] Reformular comunicação para "Mercado de Previsão" (Remover termos de apostas tradicionais)
+- [x] Criar rodapé institucional (Quem Somos, Como Funciona, Aviso Legal)
+- [ ] Validar resolução de mercado real com distribuição de lucros
+- [ ] Testar depósito real via InfinitePay (Fluxo de Webhook)
+- [ ] Revisar e-mails transacionais com a nova terminologia profissional
+- [ ] Rodar beta fechado com grupo pequeno (5-10 usuários)
+- [ ] Definir rotina de monitoramento operacional e log de pagamentos
 
 ## Roadmap posterior
 Depois do lancamento inicial:
