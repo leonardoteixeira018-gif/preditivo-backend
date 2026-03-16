@@ -399,10 +399,82 @@ router.get('/users', async (req, res) => {
   }
 });
 
+// GET /admin/receita — receita e lucratividade da plataforma
+router.get('/receita', async (req, res) => {
+  try {
+    const casaQ = await pool.query(`
+      SELECT
+        COALESCE(SUM(b.amount), 0) AS receita_bruta,
+        COALESCE(SUM(b.taxa), 0)   AS taxa_coletada
+      FROM bets b
+    `);
+    const depositosQ = await pool.query(`
+      SELECT COALESCE(SUM(amount), 0) AS total_depositado
+      FROM deposits WHERE status = 'confirmed'
+    `);
+    const realQ = await pool.query(`
+      SELECT
+        COALESCE(SUM(b.amount), 0) AS total_apostado,
+        COALESCE(SUM(CASE WHEN b.status = 'won' THEN b.potential_payout ELSE 0 END), 0) AS total_pago,
+        COALESCE(SUM(b.taxa), 0)   AS taxa_coletada
+      FROM bets b JOIN users u ON u.id = b.user_id
+      WHERE COALESCE(u.is_bot, false) = false
+    `);
+    const botQ = await pool.query(`
+      SELECT
+        COALESCE(SUM(b.amount), 0) AS total_apostado,
+        COALESCE(SUM(CASE WHEN b.status = 'won' THEN b.potential_payout ELSE 0 END), 0) AS total_pago,
+        COALESCE(SUM(b.taxa), 0)   AS taxa_coletada
+      FROM bets b JOIN users u ON u.id = b.user_id
+      WHERE COALESCE(u.is_bot, false) = true
+    `);
+    const mercadosQ = await pool.query(`
+      SELECT m.title, m.resolved_outcome,
+        COALESCE(SUM(b.amount), 0) AS total_apostado,
+        COALESCE(SUM(b.taxa), 0)   AS taxa_coletada
+      FROM markets m
+      LEFT JOIN bets b ON b.market_id = m.id
+      GROUP BY m.id, m.title, m.resolved_outcome
+      ORDER BY total_apostado DESC LIMIT 20
+    `);
+    const c = casaQ.rows[0];
+    const r = realQ.rows[0];
+    const a = botQ.rows[0];
+    const totalPago = parseFloat(r.total_pago) + parseFloat(a.total_pago);
+    res.json({
+      casa: {
+        receita_bruta:    parseFloat(c.receita_bruta),
+        taxa_coletada:    parseFloat(c.taxa_coletada),
+        spread_retido:    parseFloat(c.receita_bruta) - totalPago - parseFloat(c.taxa_coletada),
+        total_depositado: parseFloat(depositosQ.rows[0].total_depositado)
+      },
+      usuarios_reais: {
+        total_apostado: parseFloat(r.total_apostado),
+        total_pago:     parseFloat(r.total_pago),
+        taxa_coletada:  parseFloat(r.taxa_coletada),
+        lucro_liquido:  parseFloat(r.total_apostado) - parseFloat(r.total_pago) - parseFloat(r.taxa_coletada)
+      },
+      usuarios_artificiais: {
+        total_apostado: parseFloat(a.total_apostado),
+        total_pago:     parseFloat(a.total_pago),
+        taxa_coletada:  parseFloat(a.taxa_coletada),
+        lucro_liquido:  parseFloat(a.total_apostado) - parseFloat(a.total_pago) - parseFloat(a.taxa_coletada)
+      },
+      por_mercado: mercadosQ.rows.map(function(m) {
+        return {
+          title:            m.title,
+          total_apostado:   parseFloat(m.total_apostado),
+          taxa_coletada:    parseFloat(m.taxa_coletada),
+          resolved_outcome: m.resolved_outcome
+        };
+      })
+    });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // POST /admin/balance — ajusta ou define o saldo de qualquer usuário
 // mode "set"   → define o saldo exatamente para `amount` (usado para bots)
 // mode "delta" (padrão) → adiciona/subtrai `amount` ao saldo atual
-// v2: validação reforçada
 router.post('/balance', async (req, res) => {
   const { user_id, amount, mode } = req.body;
   if (!user_id || amount === undefined || amount === null) {

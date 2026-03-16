@@ -55,17 +55,19 @@ const adminLimiter = rateLimit({
   legacyHeaders: false,
 });
 
-// Aplicar limitadores
+// Limitadores de auth
 app.use('/auth/login', authLimiter);
 app.use('/auth/register', authLimiter);
 app.use('/auth/forgot-password', authLimiter);
 app.use('/auth/reset-password', authLimiter);
-app.use('/admin', adminLimiter);  // admin tem limite próprio mais alto (2000/15min)
-// generalLimiter aplica a tudo EXCETO /admin (que já tem seu próprio limiter)
-app.use(function(req, res, next) {
-  if (req.path.startsWith('/admin')) return next();
-  return generalLimiter(req, res, next);
-});
+
+// Admin: limiter próprio + router ANTES do generalLimiter.
+// Quando o adminRouter responde, a req encerra — generalLimiter nunca executa para /admin/*
+app.use('/admin', adminLimiter);
+app.use('/admin', require('./routes/admin'));
+
+// General limiter para todas as demais rotas (não afeta /admin)
+app.use(generalLimiter);
 
 app.use('/auth', require('./routes/auth'));
 app.use('/markets', require('./routes/markets'));
@@ -74,7 +76,6 @@ app.use('/ranking', require('./routes/ranking'));
 app.use('/deposits', require('./routes/deposits'));
 app.use('/withdrawals', require('./routes/withdrawals'));
 app.use('/referrals', require('./routes/referrals'));
-app.use('/admin', require('./routes/admin'));
 app.use('/transak', require('./routes/transak'));
 
 app.get('/health', async (req, res) => {
