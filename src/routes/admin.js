@@ -592,7 +592,9 @@ router.post('/markets/:id/resolve', async (req, res) => {
         losers++;
       }
 
-      await processRollover(bet.user_id, client);
+      // processRollover usa pool separado — não pode rodar dentro da transação
+      // pois se falhar aborta o transaction client e quebra o COMMIT
+      processRollover(bet.user_id, pool).catch(() => {});
     }
 
     await client.query('COMMIT');

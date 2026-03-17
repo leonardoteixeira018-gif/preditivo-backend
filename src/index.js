@@ -1,4 +1,4 @@
-// v2026.03.17 — resolve: payout field + cache + logging + detailed response; reopen: transaction; markets.js: transaction + FOR UPDATE
+// v2026.03.17b — fix: processRollover fora da transação + migrations bonus_locked/bonus_bets_count
 require('dotenv').config();
 const express = require('express');
 const rateLimit = require('express-rate-limit');
@@ -120,6 +120,12 @@ app.listen(PORT, async () => {
 
   await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified_at TIMESTAMPTZ').catch(() => {});
   await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS two_fa_enabled BOOLEAN DEFAULT false').catch(() => {});
+
+  // Colunas de bônus — necessárias para processRollover funcionar
+  await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS bonus_balance DECIMAL(18,2) NOT NULL DEFAULT 0").catch(() => {});
+  await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS bonus_locked DECIMAL(18,2) NOT NULL DEFAULT 0").catch(() => {});
+  await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS bonus_bets_count INTEGER NOT NULL DEFAULT 0").catch(() => {});
+  await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS wallet_address VARCHAR(42)").catch(() => {});
   await pool.query('ALTER TABLE deposits ADD COLUMN IF NOT EXISTS provider_reference TEXT').catch(() => {});
   await pool.query('ALTER TABLE deposits ADD COLUMN IF NOT EXISTS provider_status TEXT').catch(() => {});
   await pool.query('ALTER TABLE deposits ADD COLUMN IF NOT EXISTS provider_payload JSONB NOT NULL DEFAULT \'{}\'::jsonb').catch(() => {});
