@@ -19,7 +19,7 @@ const allowedOrigins = [appOrigin, altOrigin, 'http://localhost:3000', 'http://l
 
 app.use(cors({
   origin(origin, callback) {
-    if (!origin || allowedOrigins.includes(origin) || origin.endsWith('.vercel.app')) {
+    if (!origin || allowedOrigins.includes(origin) || origin.endsWith('.vercel.app') || origin.endsWith('.github.io')) {
       return callback(null, true);
     }
     return callback(new Error(`CORS bloqueado para a origem ${origin}`));
