@@ -541,6 +541,7 @@ router.post('/markets/:id/resolve', async (req, res) => {
 
     await client.query('BEGIN');
 
+    // Lock exclusivo — previne resolução dupla concorrente
     const market = await client.query(
       'SELECT * FROM markets WHERE id = $1 FOR UPDATE',
       [req.params.id]
@@ -556,6 +557,8 @@ router.post('/markets/:id/resolve', async (req, res) => {
       return res.status(400).json({ error: 'Mercado ja resolvido' });
     }
 
+    const m = market.rows[0];
+
     await client.query(
       'UPDATE markets SET resolved_at = NOW(), resolved_outcome = $1, status = $2 WHERE id = $3',
       [outcome, 'resolved', req.params.id]
@@ -566,24 +569,62 @@ router.post('/markets/:id/resolve', async (req, res) => {
       [req.params.id]
     );
 
+    let winners = 0, losers = 0, totalPaid = 0;
+
     for (const bet of bets.rows) {
       if (bet.side === outcome) {
-        await client.query("UPDATE bets SET status = 'won' WHERE id = $1", [bet.id]);
+        const payout = parseFloat(bet.potential_payout);
+        await client.query(
+          "UPDATE bets SET status = 'won', payout = $1 WHERE id = $2",
+          [payout, bet.id]
+        );
         await client.query(
           'UPDATE users SET balance = balance + $1 WHERE id = $2',
-          [bet.potential_payout, bet.user_id]
+          [payout, bet.user_id]
         );
+        winners++;
+        totalPaid += payout;
       } else {
-        await client.query("UPDATE bets SET status = 'lost' WHERE id = $1", [bet.id]);
+        await client.query(
+          "UPDATE bets SET status = 'lost', payout = 0 WHERE id = $1",
+          [bet.id]
+        );
+        losers++;
       }
 
       await processRollover(bet.user_id, client);
     }
 
     await client.query('COMMIT');
-    res.json({ ok: true, resolved: `${bets.rows.length} apostas processadas` });
+
+    // Invalida cache após commit (operação de memória — fora da transação)
+    const cache = require('../lib/cache');
+    cache.del('markets:list');
+    cache.del('ranking:list');
+
+    console.log(JSON.stringify({
+      ts: new Date().toISOString(),
+      level: 'INFO',
+      msg: 'Mercado resolvido',
+      market_id: req.params.id,
+      title: m.title,
+      outcome,
+      winners,
+      losers,
+      total_paid: totalPaid.toFixed(2)
+    }));
+
+    res.json({
+      ok: true,
+      resolved: `${bets.rows.length} apostas processadas`,
+      winners,
+      losers,
+      total_paid: totalPaid.toFixed(2),
+      outcome
+    });
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'ERROR', msg: 'Erro ao resolver mercado', market_id: req.params.id, error: err.message }));
     res.status(500).json({ error: err.message });
   } finally {
     client.release();
@@ -592,34 +633,54 @@ router.post('/markets/:id/resolve', async (req, res) => {
 
 // ── REABRIR MERCADO ───────────────────────────────────────────────────────────
 router.post('/markets/:id/reopen', async (req, res) => {
+  const client = await pool.connect();
   try {
-    const market = await pool.query('SELECT * FROM markets WHERE id = $1', [req.params.id]);
-    if (!market.rows.length) return res.status(404).json({ error: 'Mercado não encontrado' });
+    await client.query('BEGIN');
+
+    const market = await client.query(
+      'SELECT * FROM markets WHERE id = $1 FOR UPDATE',
+      [req.params.id]
+    );
+    if (!market.rows.length) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Mercado não encontrado' });
+    }
 
     // Estorna payouts dos vencedores (debita o que foi pago)
     const { revert_payouts = false, new_ends_at } = req.body;
 
     if (revert_payouts) {
-      const wonBets = await pool.query(
+      const wonBets = await client.query(
         "SELECT user_id, potential_payout FROM bets WHERE market_id = $1 AND status = 'won'",
         [req.params.id]
       );
       for (const b of wonBets.rows) {
-        await pool.query('UPDATE users SET balance = GREATEST(balance - $1, 0) WHERE id = $2',
-          [b.potential_payout, b.user_id]);
+        await client.query(
+          'UPDATE users SET balance = GREATEST(balance - $1, 0) WHERE id = $2',
+          [b.potential_payout, b.user_id]
+        );
       }
       // Volta todas apostas para 'open'
-      await pool.query("UPDATE bets SET status = 'open' WHERE market_id = $1 AND status IN ('won','lost')", [req.params.id]);
+      await client.query(
+        "UPDATE bets SET status = 'open', payout = NULL WHERE market_id = $1 AND status IN ('won','lost')",
+        [req.params.id]
+      );
     }
 
     const endsAt = new_ends_at || market.rows[0].ends_at;
-    await pool.query(
+    await client.query(
       `UPDATE markets SET resolved_at = NULL, resolved_outcome = NULL, status = 'open', ends_at = $1 WHERE id = $2`,
       [endsAt, req.params.id]
     );
 
+    await client.query('COMMIT');
     res.json({ ok: true, message: 'Mercado reaberto com sucesso' });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
+  }
 });
 
 // ── STATS BOTS ─────────────────────────────────────────────────────────────────

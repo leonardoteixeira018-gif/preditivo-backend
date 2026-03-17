@@ -1,4 +1,4 @@
-// v2026.03.16 — force redeploy: balance, bots/reload-balances, receita, markets/resolve
+// v2026.03.17 — resolve: payout field + cache + logging + detailed response; reopen: transaction; markets.js: transaction + FOR UPDATE
 require('dotenv').config();
 const express = require('express');
 const rateLimit = require('express-rate-limit');

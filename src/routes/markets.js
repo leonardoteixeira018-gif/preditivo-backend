@@ -97,24 +97,37 @@ router.patch('/:id/image', adminAuth, async (req, res) => {
 });
 
 router.post('/:id/resolve', adminAuth, async (req, res) => {
+  const client = await pool.connect();
   try {
     const { outcome } = req.body;
-    const market = await pool.query('SELECT * FROM markets WHERE id = $1', [req.params.id]);
-    if (!market.rows.length) return res.status(404).json({ error: 'Mercado nao encontrado' });
-    if (market.rows[0].resolved_at) return res.status(400).json({ error: 'Mercado ja resolvido' });
+    if (!['yes', 'no'].includes(outcome)) {
+      return res.status(400).json({ error: 'outcome deve ser yes ou no' });
+    }
+
+    await client.query('BEGIN');
+
+    // Lock exclusivo — previne resolução dupla concorrente
+    const market = await client.query(
+      'SELECT * FROM markets WHERE id = $1 FOR UPDATE',
+      [req.params.id]
+    );
+    if (!market.rows.length) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Mercado nao encontrado' });
+    }
+    if (market.rows[0].resolved_at) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Mercado ja resolvido' });
+    }
 
     const m = market.rows[0];
 
-    await pool.query(
+    await client.query(
       'UPDATE markets SET status = $1, resolved_outcome = $2, resolved_at = NOW() WHERE id = $3',
       ['resolved', outcome, m.id]
     );
 
-    // Invalida ambos os caches ao resolver o mercado
-    cache.del(CACHE_KEY_LIST);
-    cache.del('ranking:list');
-
-    const winners = await pool.query(
+    const winners = await client.query(
       `SELECT b.*, u.email, u.username
        FROM bets b
        JOIN users u ON u.id = b.user_id
@@ -124,10 +137,32 @@ router.post('/:id/resolve', adminAuth, async (req, res) => {
 
     for (const bet of winners.rows) {
       const payout = parseFloat(bet.potential_payout);
-      await pool.query('UPDATE users SET balance = balance + $1 WHERE id = $2', [payout, bet.user_id]);
-      await pool.query('UPDATE bets SET status = $1, payout = $2 WHERE id = $3', ['won', payout, bet.id]);
+      await client.query('UPDATE users SET balance = balance + $1 WHERE id = $2', [payout, bet.user_id]);
+      await client.query('UPDATE bets SET status = $1, payout = $2 WHERE id = $3', ['won', payout, bet.id]);
+    }
 
-      await sendEmail(
+    const losers = await client.query(
+      `SELECT b.*, u.email, u.username
+       FROM bets b
+       JOIN users u ON u.id = b.user_id
+       WHERE b.market_id = $1 AND b.side != $2 AND b.status = $3`,
+      [m.id, outcome, 'open']
+    );
+
+    for (const bet of losers.rows) {
+      await client.query('UPDATE bets SET status = $1, payout = 0 WHERE id = $2', ['lost', bet.id]);
+    }
+
+    await client.query('COMMIT');
+
+    // Invalida caches após commit
+    cache.del(CACHE_KEY_LIST);
+    cache.del('ranking:list');
+
+    // Envia emails fora da transação (não bloqueia o commit em caso de falha)
+    for (const bet of winners.rows) {
+      const payout = parseFloat(bet.potential_payout);
+      sendEmail(
         bet.email,
         `Voce ganhou! Mercado resolvido - ${APP_BRAND}`,
         `<div style="font-family:sans-serif;background:#080c10;color:#e8edf2;padding:32px;border-radius:12px;max-width:500px">
@@ -141,21 +176,11 @@ router.post('/:id/resolve', adminAuth, async (req, res) => {
           </div>
           <a href="${APP_URL}" style="display:inline-block;background:#00e676;color:#080c10;font-weight:700;padding:12px 24px;border-radius:8px;text-decoration:none">Ver meu saldo</a>
         </div>`
-      );
+      ).catch(() => {});
     }
 
-    const losers = await pool.query(
-      `SELECT b.*, u.email, u.username
-       FROM bets b
-       JOIN users u ON u.id = b.user_id
-       WHERE b.market_id = $1 AND b.side != $2 AND b.status = $3`,
-      [m.id, outcome, 'open']
-    );
-
     for (const bet of losers.rows) {
-      await pool.query('UPDATE bets SET status = $1 WHERE id = $2', ['lost', bet.id]);
-
-      await sendEmail(
+      sendEmail(
         bet.email,
         `Resultado do mercado - ${APP_BRAND}`,
         `<div style="font-family:sans-serif;background:#080c10;color:#e8edf2;padding:32px;border-radius:12px;max-width:500px">
@@ -169,10 +194,10 @@ router.post('/:id/resolve', adminAuth, async (req, res) => {
           <p style="color:#5a6878;font-size:0.85rem;margin-bottom:20px">Nao desanime, explore outros mercados e tente novamente.</p>
           <a href="${APP_URL}" style="display:inline-block;background:#0e1419;color:#00e676;font-weight:700;padding:12px 24px;border-radius:8px;text-decoration:none;border:1px solid rgba(0,230,118,0.3)">Ver mercados</a>
         </div>`
-      );
+      ).catch(() => {});
     }
 
-    await sendEmail(
+    sendEmail(
       ADMIN_EMAIL,
       `[Admin] Mercado resolvido: ${m.title}`,
       `<div style="font-family:sans-serif;background:#080c10;color:#e8edf2;padding:32px;border-radius:12px;max-width:500px">
@@ -185,16 +210,21 @@ router.post('/:id/resolve', adminAuth, async (req, res) => {
         </div>
         <a href="${APP_URL}/admin.html" style="display:inline-block;background:#00b4ff;color:#080c10;font-weight:700;padding:12px 24px;border-radius:8px;text-decoration:none">Ver painel admin</a>
       </div>`
-    );
+    ).catch(() => {});
 
     res.json({
       success: true,
+      ok: true,
       winners_paid: winners.rows.length,
+      winners: winners.rows.length,
       losers: losers.rows.length,
       outcome
     });
   } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
     res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
   }
 });
 
