@@ -358,4 +358,50 @@ router.get('/portfolio', auth, async (req, res) => {
   }
 });
 
+// GET /bets/pnl?period=all|month|week|day
+router.get('/pnl', auth, async (req, res) => {
+  const { period = 'all' } = req.query;
+  let dateFilter = '';
+  if (period === 'day')   dateFilter = "AND created_at >= NOW() - INTERVAL '1 day'";
+  if (period === 'week')  dateFilter = "AND created_at >= NOW() - INTERVAL '7 days'";
+  if (period === 'month') dateFilter = "AND created_at >= NOW() - INTERVAL '30 days'";
+
+  try {
+    const stats = await pool.query(`
+      SELECT
+        COUNT(*) FILTER (WHERE status = 'won')  AS win_count,
+        COUNT(*) FILTER (WHERE status = 'lost') AS loss_count,
+        COALESCE(SUM(amount)  FILTER (WHERE status IN ('won','lost')), 0) AS total_wagered,
+        COALESCE(SUM(payout)  FILTER (WHERE status = 'won'), 0)           AS total_payout,
+        COALESCE(SUM(payout - amount) FILTER (WHERE status IN ('won','lost')), 0) AS total_pnl,
+        COALESCE(SUM(potential_payout) FILTER (WHERE status = 'open'), 0) AS open_value,
+        COALESCE(SUM(amount)           FILTER (WHERE status = 'open'), 0) AS open_invested
+      FROM bets WHERE user_id = $1 ${dateFilter}
+    `, [req.user.id]);
+
+    const history = await pool.query(`
+      SELECT DATE(created_at) AS date,
+        COALESCE(SUM(payout - amount) FILTER (WHERE status IN ('won','lost')), 0) AS daily_pnl
+      FROM bets
+      WHERE user_id = $1 AND created_at >= NOW() - INTERVAL '30 days'
+      GROUP BY DATE(created_at)
+      ORDER BY date ASC
+    `, [req.user.id]);
+
+    const s = stats.rows[0];
+    const wins = parseInt(s.win_count) || 0;
+    const losses = parseInt(s.loss_count) || 0;
+    res.json({
+      total_pnl:     parseFloat(s.total_pnl).toFixed(2),
+      total_wagered: parseFloat(s.total_wagered).toFixed(2),
+      total_payout:  parseFloat(s.total_payout).toFixed(2),
+      open_value:    parseFloat(s.open_value).toFixed(2),
+      open_invested: parseFloat(s.open_invested).toFixed(2),
+      win_count: wins, loss_count: losses,
+      win_rate: (wins + losses) > 0 ? ((wins / (wins + losses)) * 100).toFixed(1) : '0.0',
+      history: history.rows.map(r => ({ date: r.date, pnl: parseFloat(r.daily_pnl).toFixed(2) }))
+    });
+  } catch(err) { res.status(500).json({ error: err.message }); }
+});
+
 module.exports = router;
