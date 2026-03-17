@@ -510,6 +510,26 @@ router.post('/balance', async (req, res) => {
   }
 });
 
+// POST /admin/markets — criar novo mercado (alias do POST /markets em markets.js)
+router.post('/markets', async (req, res) => {
+  try {
+    const { title, description, category, ends_at, closes_at, image_url } = req.body;
+    const marketEndsAt = ends_at || closes_at;
+    if (!title || !marketEndsAt) {
+      return res.status(400).json({ error: 'title e ends_at sao obrigatorios' });
+    }
+    const result = await pool.query(
+      `INSERT INTO markets (title, description, category, ends_at, q_yes, q_no, b, volume, status, image_url)
+       VALUES ($1, $2, $3, $4, 100, 100, 100, 0, 'open', $5)
+       RETURNING *`,
+      [title, description || null, category || 'politica', marketEndsAt, image_url || null]
+    );
+    res.json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.post('/markets/:id/resolve', async (req, res) => {
   const client = await pool.connect();
 
