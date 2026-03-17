@@ -552,18 +552,23 @@ router.post('/markets/:id/resolve', async (req, res) => {
       return res.status(404).json({ error: 'Mercado nao encontrado' });
     }
 
-    if (market.rows[0].resolved_at) {
-      await client.query('ROLLBACK');
-      return res.status(400).json({ error: 'Mercado ja resolvido' });
-    }
-
     const m = market.rows[0];
 
-    await client.query(
-      'UPDATE markets SET resolved_at = NOW(), resolved_outcome = $1, status = $2 WHERE id = $3',
-      [outcome, 'resolved', req.params.id]
-    );
+    // Se já resolvido com outcome diferente → erro (não permite mudar)
+    if (m.resolved_at && m.resolved_outcome && m.resolved_outcome !== outcome) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: `Mercado ja resolvido como "${m.resolved_outcome}". Nao e possivel alterar o resultado.` });
+    }
 
+    // Se ainda não resolvido → marcar como resolvido agora
+    if (!m.resolved_at) {
+      await client.query(
+        'UPDATE markets SET resolved_at = NOW(), resolved_outcome = $1, status = $2 WHERE id = $3',
+        [outcome, 'resolved', req.params.id]
+      );
+    }
+
+    // Processar TODAS as bets ainda abertas (idempotente — funciona mesmo em retry)
     const bets = await client.query(
       "SELECT * FROM bets WHERE market_id = $1 AND status = 'open'",
       [req.params.id]
@@ -573,7 +578,7 @@ router.post('/markets/:id/resolve', async (req, res) => {
 
     for (const bet of bets.rows) {
       if (bet.side === outcome) {
-        const payout = parseFloat(bet.potential_payout);
+        const payout = parseFloat(bet.potential_payout) || 0;
         await client.query(
           "UPDATE bets SET status = 'won', payout = $1 WHERE id = $2",
           [payout, bet.id]
@@ -591,42 +596,57 @@ router.post('/markets/:id/resolve', async (req, res) => {
         );
         losers++;
       }
-
-      // processRollover usa pool separado — não pode rodar dentro da transação
-      // pois se falhar aborta o transaction client e quebra o COMMIT
       processRollover(bet.user_id, pool).catch(() => {});
     }
 
     await client.query('COMMIT');
 
-    // Invalida cache após commit (operação de memória — fora da transação)
+    // Invalida cache após commit
     const cache = require('../lib/cache');
     cache.del('markets:list');
     cache.del('ranking:list');
 
+    // Buscar stats completos do mercado para o relatório detalhado
+    const statsResult = await pool.query(`
+      SELECT
+        COUNT(*) FILTER (WHERE status = 'won') as total_winners,
+        COUNT(*) FILTER (WHERE status = 'lost') as total_losers,
+        COUNT(*) as total_bets,
+        COALESCE(SUM(CASE WHEN status = 'won' THEN payout ELSE 0 END), 0) as total_paid,
+        COALESCE(SUM(amount), 0) as total_wagered,
+        COALESCE(SUM(taxa), 0) as total_taxa
+      FROM bets WHERE market_id = $1
+    `, [req.params.id]);
+
+    const stats = statsResult.rows[0];
+    const totalWagered = parseFloat(stats.total_wagered);
+    const totalPaidFinal = parseFloat(stats.total_paid);
+    const houseRetained = totalWagered - totalPaidFinal;
+
     console.log(JSON.stringify({
-      ts: new Date().toISOString(),
-      level: 'INFO',
-      msg: 'Mercado resolvido',
-      market_id: req.params.id,
-      title: m.title,
-      outcome,
-      winners,
-      losers,
-      total_paid: totalPaid.toFixed(2)
+      ts: new Date().toISOString(), level: 'INFO', msg: 'Mercado resolvido',
+      market_id: req.params.id, title: m.title, outcome,
+      winners: parseInt(stats.total_winners), losers: parseInt(stats.total_losers),
+      total_paid: totalPaidFinal.toFixed(2), total_wagered: totalWagered.toFixed(2),
+      house_retained: houseRetained.toFixed(2), newly_processed: bets.rows.length
     }));
 
     res.json({
       ok: true,
-      resolved: `${bets.rows.length} apostas processadas`,
-      winners,
-      losers,
-      total_paid: totalPaid.toFixed(2),
-      outcome
+      outcome,
+      title: m.title,
+      winners: parseInt(stats.total_winners),
+      losers: parseInt(stats.total_losers),
+      total_bets: parseInt(stats.total_bets),
+      total_paid: totalPaidFinal.toFixed(2),
+      total_wagered: totalWagered.toFixed(2),
+      total_taxa: parseFloat(stats.total_taxa).toFixed(2),
+      house_retained: houseRetained.toFixed(2),
+      newly_processed: bets.rows.length
     });
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
-    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'ERROR', msg: 'Erro ao resolver mercado', market_id: req.params.id, error: err.message }));
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'ERROR', msg: 'Erro ao resolver mercado', market_id: req.params.id, error: err.message, stack: err.stack }));
     res.status(500).json({ error: err.message });
   } finally {
     client.release();
