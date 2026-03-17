@@ -367,16 +367,23 @@ router.get('/pnl', auth, async (req, res) => {
   if (period === 'month') dateFilter = "AND created_at >= NOW() - INTERVAL '30 days'";
 
   try {
+    // Query 1: P&L stats filtradas pelo período selecionado
     const stats = await pool.query(`
       SELECT
         COUNT(*) FILTER (WHERE status = 'won')  AS win_count,
         COUNT(*) FILTER (WHERE status = 'lost') AS loss_count,
         COALESCE(SUM(amount)  FILTER (WHERE status IN ('won','lost')), 0) AS total_wagered,
         COALESCE(SUM(payout)  FILTER (WHERE status = 'won'), 0)           AS total_payout,
-        COALESCE(SUM(payout - amount) FILTER (WHERE status IN ('won','lost')), 0) AS total_pnl,
+        COALESCE(SUM(payout - amount) FILTER (WHERE status IN ('won','lost')), 0) AS total_pnl
+      FROM bets WHERE user_id = $1 ${dateFilter}
+    `, [req.user.id]);
+
+    // Query 2: posições abertas SEMPRE sem filtro de período
+    const openStats = await pool.query(`
+      SELECT
         COALESCE(SUM(potential_payout) FILTER (WHERE status = 'open'), 0) AS open_value,
         COALESCE(SUM(amount)           FILTER (WHERE status = 'open'), 0) AS open_invested
-      FROM bets WHERE user_id = $1 ${dateFilter}
+      FROM bets WHERE user_id = $1
     `, [req.user.id]);
 
     const history = await pool.query(`
@@ -389,14 +396,15 @@ router.get('/pnl', auth, async (req, res) => {
     `, [req.user.id]);
 
     const s = stats.rows[0];
+    const o = openStats.rows[0];
     const wins = parseInt(s.win_count) || 0;
     const losses = parseInt(s.loss_count) || 0;
     res.json({
       total_pnl:     parseFloat(s.total_pnl).toFixed(2),
       total_wagered: parseFloat(s.total_wagered).toFixed(2),
       total_payout:  parseFloat(s.total_payout).toFixed(2),
-      open_value:    parseFloat(s.open_value).toFixed(2),
-      open_invested: parseFloat(s.open_invested).toFixed(2),
+      open_value:    parseFloat(o.open_value).toFixed(2),
+      open_invested: parseFloat(o.open_invested).toFixed(2),
       win_count: wins, loss_count: losses,
       win_rate: (wins + losses) > 0 ? ((wins / (wins + losses)) * 100).toFixed(1) : '0.0',
       history: history.rows.map(r => ({ date: r.date, pnl: parseFloat(r.daily_pnl).toFixed(2) }))
