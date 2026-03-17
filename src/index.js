@@ -170,6 +170,7 @@ app.listen(PORT, async () => {
     )
   `).catch(() => {});
   await pool.query('CREATE INDEX IF NOT EXISTS idx_notifications_user_read ON notifications(user_id, is_read)').catch(() => {});
+  await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_url TEXT').catch(() => {});
 
   // Índices adicionais para queries críticas
   await pool.query('CREATE INDEX IF NOT EXISTS idx_bets_user_market ON bets(user_id, market_id)').catch(() => {});

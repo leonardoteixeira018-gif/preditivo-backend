@@ -261,7 +261,7 @@ router.post('/2fa/disable', auth, async (req, res) => {
 router.get('/me', auth, async (req, res) => {
   try {
     const result = await pool.query(
-      'SELECT id, username AS name, email, balance, bonus_balance, two_fa_enabled FROM users WHERE id = $1',
+      'SELECT id, username AS name, email, balance, bonus_balance, two_fa_enabled, avatar_url FROM users WHERE id = $1',
       [req.user.id]
     );
     res.json(result.rows[0]);
@@ -272,10 +272,25 @@ router.get('/me', auth, async (req, res) => {
 
 router.patch('/profile', auth, async (req, res) => {
   try {
-    const { name, password } = req.body;
+    const { name, password, avatar_url } = req.body;
+
+    // Validar tamanho do avatar (base64 ~700KB limit → ~512KB imagem)
+    if (avatar_url && avatar_url.length > 720000) {
+      return res.status(400).json({ error: 'Imagem muito grande. Use uma foto menor.' });
+    }
+
     if (password) {
       const hash = await bcrypt.hash(password, 10);
-      await pool.query('UPDATE users SET username = $1, password_hash = $2 WHERE id = $3', [name, hash, req.user.id]);
+      await pool.query(
+        'UPDATE users SET username = $1, password_hash = $2, avatar_url = COALESCE($3, avatar_url) WHERE id = $4',
+        [name, hash, avatar_url || null, req.user.id]
+      );
+    } else if (avatar_url !== undefined) {
+      // Pode atualizar só o avatar sem nome/senha
+      await pool.query(
+        'UPDATE users SET username = $1, avatar_url = $2 WHERE id = $3',
+        [name || req.user.id, avatar_url, req.user.id]
+      );
     } else {
       await pool.query('UPDATE users SET username = $1 WHERE id = $2', [name, req.user.id]);
     }
