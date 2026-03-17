@@ -38,7 +38,12 @@ router.get('/', async (req, res) => {
 
 router.get('/:id', async (req, res) => {
   try {
-    const market = await pool.query('SELECT * FROM markets WHERE id = $1', [req.params.id]);
+    const market = await pool.query(
+      `SELECT m.*,
+        (SELECT COUNT(DISTINCT user_id) FROM bets WHERE market_id = m.id) AS bettors_count
+       FROM markets m WHERE m.id = $1`,
+      [req.params.id]
+    );
     if (!market.rows.length) {
       return res.status(404).json({ error: 'Mercado nao encontrado' });
     }

@@ -644,6 +644,45 @@ router.post('/markets/:id/resolve', async (req, res) => {
       ).catch(() => {});
     }
 
+    // Emails de resultado (fire-and-forget, em paralelo)
+    if (newlyProcessed > 0) {
+      const { sendEmail } = require('../lib/email');
+      const { APP_BRAND, APP_URL } = require('../lib/appConfig');
+
+      const wonByUser = {};
+      wonResult.rows.forEach(b => {
+        wonByUser[b.user_id] = (wonByUser[b.user_id] || 0) + (parseFloat(b.potential_payout) || 0);
+      });
+
+      pool.query(
+        'SELECT id, email, username FROM users WHERE id = ANY($1::uuid[])',
+        [allProcessedUids]
+      ).then(usersRes => {
+        const userMap = {};
+        usersRes.rows.forEach(u => { userMap[u.id] = u; });
+
+        allProcessedUids.forEach(uid => {
+          const u = userMap[uid];
+          if (!u?.email) return;
+          const won = !!wonByUser[uid];
+          const payout = wonByUser[uid] || 0;
+          const subject = won
+            ? `🎉 Você ganhou R$${payout.toFixed(2)} — ${APP_BRAND}`
+            : `📊 Mercado encerrado — ${APP_BRAND}`;
+          const html = won
+            ? `<h2>Parabéns, ${u.username}! 🎉</h2>
+               <p>Você apostou corretamente em <strong>"${m.title}"</strong> e ganhou <strong>R$${payout.toFixed(2)}</strong>.</p>
+               <p>Seu saldo já foi atualizado. Continue apostando!</p>
+               <p><a href="${APP_URL}">Acessar ${APP_BRAND}</a></p>`
+            : `<h2>Resultado do mercado</h2>
+               <p>O mercado <strong>"${m.title}"</strong> foi encerrado com resultado: <strong>${outcome === 'yes' ? 'SIM' : 'NÃO'}</strong>.</p>
+               <p>Desta vez não foi, mas há muitos outros mercados abertos esperando por você.</p>
+               <p><a href="${APP_URL}">Ver mercados</a></p>`;
+          sendEmail(u.email, subject, html).catch(() => {});
+        });
+      }).catch(() => {});
+    }
+
     // Buscar stats completos do mercado para o relatório detalhado
     const statsResult = await pool.query(`
       SELECT
