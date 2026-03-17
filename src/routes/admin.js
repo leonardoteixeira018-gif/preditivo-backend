@@ -568,35 +568,40 @@ router.post('/markets/:id/resolve', async (req, res) => {
       );
     }
 
-    // Processar TODAS as bets ainda abertas (idempotente — funciona mesmo em retry)
-    const bets = await client.query(
-      "SELECT * FROM bets WHERE market_id = $1 AND status = 'open'",
-      [req.params.id]
+    const loserSide = outcome === 'yes' ? 'no' : 'yes';
+
+    // Batch 1 — marcar vencedores (1 query para todas as apostas ganhadoras)
+    const wonResult = await client.query(
+      `UPDATE bets SET status = 'won', payout = potential_payout
+       WHERE market_id = $1 AND side = $2 AND status = 'open'
+       RETURNING user_id, potential_payout`,
+      [req.params.id, outcome]
     );
 
-    let winners = 0, losers = 0, totalPaid = 0;
+    // Batch 2 — marcar perdedores (1 query para todas as apostas perdedoras)
+    const lostResult = await client.query(
+      `UPDATE bets SET status = 'lost', payout = 0
+       WHERE market_id = $1 AND side = $2 AND status = 'open'
+       RETURNING user_id`,
+      [req.params.id, loserSide]
+    );
 
-    for (const bet of bets.rows) {
-      if (bet.side === outcome) {
-        const payout = parseFloat(bet.potential_payout) || 0;
-        await client.query(
-          "UPDATE bets SET status = 'won', payout = $1 WHERE id = $2",
-          [payout, bet.id]
-        );
-        await client.query(
-          'UPDATE users SET balance = balance + $1 WHERE id = $2',
-          [payout, bet.user_id]
-        );
-        winners++;
-        totalPaid += payout;
-      } else {
-        await client.query(
-          "UPDATE bets SET status = 'lost', payout = 0 WHERE id = $1",
-          [bet.id]
-        );
-        losers++;
+    const newlyProcessed = wonResult.rows.length + lostResult.rows.length;
+
+    // Batch 3 — creditar saldo de todos os vencedores em 1 única query (unnest)
+    if (wonResult.rows.length > 0) {
+      const payoutByUser = {};
+      for (const row of wonResult.rows) {
+        payoutByUser[row.user_id] = (payoutByUser[row.user_id] || 0) + (parseFloat(row.potential_payout) || 0);
       }
-      processRollover(bet.user_id, pool).catch(() => {});
+      const uids    = Object.keys(payoutByUser);
+      const amounts = uids.map(uid => payoutByUser[uid]);
+      await client.query(
+        `UPDATE users SET balance = balance + sub.total
+         FROM unnest($1::uuid[], $2::numeric[]) AS sub(uid, total)
+         WHERE users.id = sub.uid`,
+        [uids, amounts]
+      );
     }
 
     await client.query('COMMIT');
@@ -606,18 +611,36 @@ router.post('/markets/:id/resolve', async (req, res) => {
     cache.del('markets:list');
     cache.del('ranking:list');
 
-    // Criar notificações in-app para ganhadores e perdedores
-    for (const bet of bets.rows) {
-      const won = bet.side === outcome;
-      const payout = parseFloat(bet.potential_payout) || 0;
-      const notifTitle = won ? '🎉 Você ganhou!' : '📊 Mercado encerrado';
-      const notifBody  = won
-        ? `${m.title} — você recebeu R$${payout.toFixed(2)}`
-        : `${m.title} — resultado: ${outcome === 'yes' ? 'SIM' : 'NÃO'}`;
+    // Rollover em paralelo (fire-and-forget) — sem esperar
+    const allProcessedUids = [...new Set([
+      ...wonResult.rows.map(b => b.user_id),
+      ...lostResult.rows.map(b => b.user_id)
+    ])];
+    allProcessedUids.forEach(uid => processRollover(uid, pool).catch(() => {}));
+
+    // Notificações em batch — 1 INSERT com múltiplos rows (fire-and-forget)
+    if (newlyProcessed > 0) {
+      const allNotifs = [
+        ...wonResult.rows.map(b => ({
+          user_id: b.user_id,
+          type: 'market_won',
+          title: '🎉 Você ganhou!',
+          body: `${m.title} — você recebeu R$${(parseFloat(b.potential_payout) || 0).toFixed(2)}`,
+          meta: JSON.stringify({ market_id: req.params.id, market_title: m.title, payout: parseFloat(b.potential_payout) || 0 })
+        })),
+        ...lostResult.rows.map(b => ({
+          user_id: b.user_id,
+          type: 'market_lost',
+          title: '📊 Mercado encerrado',
+          body: `${m.title} — resultado: ${outcome === 'yes' ? 'SIM' : 'NÃO'}`,
+          meta: JSON.stringify({ market_id: req.params.id, market_title: m.title, payout: 0 })
+        }))
+      ];
+      const placeholders = allNotifs.map((_, i) => `($${i*5+1},$${i*5+2},$${i*5+3},$${i*5+4},$${i*5+5})`).join(',');
+      const notifParams  = allNotifs.flatMap(n => [n.user_id, n.type, n.title, n.body, n.meta]);
       pool.query(
-        `INSERT INTO notifications (user_id, type, title, body, meta) VALUES ($1, $2, $3, $4, $5)`,
-        [bet.user_id, won ? 'market_won' : 'market_lost', notifTitle, notifBody,
-          JSON.stringify({ market_id: req.params.id, market_title: m.title, payout: won ? payout : 0 })]
+        `INSERT INTO notifications (user_id, type, title, body, meta) VALUES ${placeholders}`,
+        notifParams
       ).catch(() => {});
     }
 
@@ -643,7 +666,7 @@ router.post('/markets/:id/resolve', async (req, res) => {
       market_id: req.params.id, title: m.title, outcome,
       winners: parseInt(stats.total_winners), losers: parseInt(stats.total_losers),
       total_paid: totalPaidFinal.toFixed(2), total_wagered: totalWagered.toFixed(2),
-      house_retained: houseRetained.toFixed(2), newly_processed: bets.rows.length
+      house_retained: houseRetained.toFixed(2), newly_processed: newlyProcessed
     }));
 
     res.json({
@@ -657,7 +680,7 @@ router.post('/markets/:id/resolve', async (req, res) => {
       total_wagered: totalWagered.toFixed(2),
       total_taxa: parseFloat(stats.total_taxa).toFixed(2),
       house_retained: houseRetained.toFixed(2),
-      newly_processed: bets.rows.length
+      newly_processed: newlyProcessed
     });
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
