@@ -319,4 +319,43 @@ router.get('/market/:market_id/book', async (req, res) => {
   }
 });
 
+// GET /bets/portfolio — posições abertas do usuário agrupadas por mercado+lado
+router.get('/portfolio', auth, async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT
+        b.market_id,
+        m.title                                                            AS market_title,
+        b.side,
+        SUM(b.amount)                                                      AS amount,
+        SUM(b.potential_payout)                                            AS potential_payout,
+        ROUND(
+          (CASE WHEN b.side = 'yes' THEN m.q_yes ELSE m.q_no END)
+          / NULLIF(m.q_yes + m.q_no, 0) * 100
+        , 1)                                                               AS prob_side,
+        m.ends_at,
+        m.resolved_at
+      FROM bets b
+      JOIN markets m ON m.id = b.market_id
+      WHERE b.user_id = $1 AND b.status = 'open'
+      GROUP BY b.market_id, m.title, b.side, m.q_yes, m.q_no, m.ends_at, m.resolved_at
+      ORDER BY m.title, b.side
+    `, [req.user.id]);
+
+    res.json(result.rows.map(r => ({
+      market_id:        r.market_id,
+      market_title:     r.market_title,
+      side:             r.side,
+      amount:           parseFloat(r.amount).toFixed(2),
+      potential_payout: parseFloat(r.potential_payout).toFixed(2),
+      prob_side:        parseFloat(r.prob_side),
+      potential:        ((parseFloat(r.potential_payout) / parseFloat(r.amount) - 1) * 100).toFixed(2),
+      ends_at:          r.ends_at,
+      resolved_at:      r.resolved_at
+    })));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;
