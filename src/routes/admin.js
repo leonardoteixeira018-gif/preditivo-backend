@@ -606,6 +606,21 @@ router.post('/markets/:id/resolve', async (req, res) => {
     cache.del('markets:list');
     cache.del('ranking:list');
 
+    // Criar notificações in-app para ganhadores e perdedores
+    for (const bet of bets.rows) {
+      const won = bet.side === outcome;
+      const payout = parseFloat(bet.potential_payout) || 0;
+      const notifTitle = won ? '🎉 Você ganhou!' : '📊 Mercado encerrado';
+      const notifBody  = won
+        ? `${m.title} — você recebeu R$${payout.toFixed(2)}`
+        : `${m.title} — resultado: ${outcome === 'yes' ? 'SIM' : 'NÃO'}`;
+      pool.query(
+        `INSERT INTO notifications (user_id, type, title, body, meta) VALUES ($1, $2, $3, $4, $5)`,
+        [bet.user_id, won ? 'market_won' : 'market_lost', notifTitle, notifBody,
+          JSON.stringify({ market_id: req.params.id, market_title: m.title, payout: won ? payout : 0 })]
+      ).catch(() => {});
+    }
+
     // Buscar stats completos do mercado para o relatório detalhado
     const statsResult = await pool.query(`
       SELECT

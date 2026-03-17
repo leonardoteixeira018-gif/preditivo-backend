@@ -81,6 +81,7 @@ app.use('/deposits', require('./routes/deposits'));
 app.use('/withdrawals', require('./routes/withdrawals'));
 app.use('/referrals', require('./routes/referrals'));
 app.use('/transak', require('./routes/transak'));
+app.use('/notifications', require('./routes/notifications'));
 
 app.get('/health', async (req, res) => {
   try {
@@ -156,6 +157,19 @@ app.listen(PORT, async () => {
       expired_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `).catch(() => {});
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS notifications (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+      type VARCHAR(50) NOT NULL,
+      title TEXT NOT NULL,
+      body TEXT NOT NULL,
+      is_read BOOLEAN NOT NULL DEFAULT false,
+      meta JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `).catch(() => {});
+  await pool.query('CREATE INDEX IF NOT EXISTS idx_notifications_user_read ON notifications(user_id, is_read)').catch(() => {});
 
   // Índices adicionais para queries críticas
   await pool.query('CREATE INDEX IF NOT EXISTS idx_bets_user_market ON bets(user_id, market_id)').catch(() => {});
