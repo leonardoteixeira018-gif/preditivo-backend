@@ -5,14 +5,20 @@ const auth = require('../middleware/auth');
 const webpush = require('web-push');
 
 // Configurar VAPID apenas se as chaves estiverem definidas
+let vapidConfigured = false;
 if (process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
-  webpush.setVapidDetails(
-    process.env.VAPID_MAILTO || 'mailto:suporte@bubuya.com.br',
-    process.env.VAPID_PUBLIC_KEY,
-    process.env.VAPID_PRIVATE_KEY
-  );
+  try {
+    let subject = process.env.VAPID_MAILTO || 'mailto:suporte@bubuya.com.br';
+    // Garante prefixo mailto: caso o env venha sem ele
+    if (!subject.startsWith('mailto:') && !subject.startsWith('https:')) {
+      subject = 'mailto:' + subject;
+    }
+    webpush.setVapidDetails(subject, process.env.VAPID_PUBLIC_KEY, process.env.VAPID_PRIVATE_KEY);
+    vapidConfigured = true;
+  } catch (err) {
+    console.error('web-push VAPID config error (push notifications desativadas):', err.message);
+  }
 }
-const vapidConfigured = !!(process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY);
 
 // POST /notifications/push-subscribe — registrar subscription de push
 router.post('/push-subscribe', auth, async (req, res) => {
