@@ -15,9 +15,13 @@ const webhookLimiter = rateLimit({
 
 function verifyInfinitePaySignature(req) {
   const secret = process.env.INFINITEPAY_WEBHOOK_SECRET;
-  // Se não configurado, apenas loga aviso (modo permissivo para não quebrar em dev)
   if (!secret) {
-    console.warn('[WEBHOOK] INFINITEPAY_WEBHOOK_SECRET não configurada — validação ignorada');
+    // Em desenvolvimento local, permite sem assinatura. Em produção (NODE_ENV=production), rejeita.
+    if (process.env.NODE_ENV === 'production') {
+      console.error('[SECURITY] INFINITEPAY_WEBHOOK_SECRET não configurada em produção — rejeitando webhook');
+      return false;
+    }
+    console.warn('[WEBHOOK] INFINITEPAY_WEBHOOK_SECRET ausente — validação ignorada (apenas dev)');
     return true;
   }
 
@@ -242,12 +246,19 @@ router.get('/my', auth, async (req, res) => {
 
 async function processReferralBonus(userId, amount, db = pool) {
   try {
-    const user = await db.query('SELECT * FROM users WHERE id = $1', [userId]);
-    if (!user.rows.length) return;
-    const u = user.rows[0];
-    if (!u.referred_by || u.first_deposit_done || parseFloat(amount) < REFERRAL_MIN_DEPOSIT) return;
+    if (parseFloat(amount) < REFERRAL_MIN_DEPOSIT) return;
 
-    await db.query('UPDATE users SET first_deposit_done = TRUE WHERE id = $1', [userId]);
+    // UPDATE atômico: só marca first_deposit_done se ainda era FALSE e há referral.
+    // Evita double-bonus em webhooks duplicados/paralelos (TOCTOU fix).
+    const claim = await db.query(
+      `UPDATE users SET first_deposit_done = TRUE
+       WHERE id = $1 AND first_deposit_done = FALSE AND referred_by IS NOT NULL
+       RETURNING referred_by`,
+      [userId]
+    );
+    if (!claim.rows.length) return; // já processado ou sem referral
+
+    const referrerId = claim.rows[0].referred_by;
 
     await db.query(
       'UPDATE users SET balance = COALESCE(balance, 0) + $1, bonus_locked = COALESCE(bonus_locked, 0) + $1, bonus_balance = COALESCE(bonus_balance, 0) + $1 WHERE id = $2',
@@ -256,12 +267,12 @@ async function processReferralBonus(userId, amount, db = pool) {
 
     await db.query(
       'UPDATE users SET balance = COALESCE(balance, 0) + $1, bonus_locked = COALESCE(bonus_locked, 0) + $1, bonus_balance = COALESCE(bonus_balance, 0) + $1 WHERE id = $2',
-      [REFERRER_BONUS, u.referred_by]
+      [REFERRER_BONUS, referrerId]
     );
 
     await db.query(
       'INSERT INTO referral_bonuses (referrer_id, referred_id, type, referrer_amount, referred_amount) VALUES ($1,$2,$3,$4,$5)',
-      [u.referred_by, userId, 'deposit', REFERRER_BONUS, REFERRED_BONUS]
+      [referrerId, userId, 'deposit', REFERRER_BONUS, REFERRED_BONUS]
     );
   } catch (err) {
     console.error('Referral bonus error:', err.message);

@@ -164,23 +164,30 @@ router.get('/my/market/:market_id', auth, async (req, res) => {
 
 // POST /bets/sell — vende uma posição aberta
 router.post('/sell', auth, async (req, res) => {
+  const client = await pool.connect();
   try {
     const { market_id, side, amount } = req.body;
     if (!['yes', 'no'].includes(side)) return res.status(400).json({ error: 'Side deve ser yes ou no' });
     const amt = parseFloat(amount);
     if (!amt || amt <= 0 || !Number.isFinite(amt)) return res.status(400).json({ error: 'Valor inválido' });
 
-    const market = await pool.query('SELECT * FROM markets WHERE id = $1', [market_id]);
-    if (!market.rows.length) return res.status(404).json({ error: 'Mercado não encontrado' });
-    if (market.rows[0].resolved_at) return res.status(400).json({ error: 'Mercado já resolvido' });
+    await client.query('BEGIN');
 
-    // Verifica se o usuário tem saldo aberto suficiente neste lado
-    const posQ = await pool.query(
+    // Trava o mercado e o usuário — tudo dentro da transação
+    const market = await client.query('SELECT * FROM markets WHERE id = $1 FOR UPDATE', [market_id]);
+    if (!market.rows.length) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Mercado não encontrado' }); }
+    if (market.rows[0].resolved_at) { await client.query('ROLLBACK'); return res.status(400).json({ error: 'Mercado já resolvido' }); }
+
+    // Checa posição DENTRO da transação com lock para evitar double-sell
+    const posQ = await client.query(
       `SELECT COALESCE(SUM(amount), 0) as total FROM bets WHERE user_id=$1 AND market_id=$2 AND side=$3 AND status='open'`,
       [req.user.id, market_id, side]
     );
     const openAmt = parseFloat(posQ.rows[0].total);
-    if (openAmt < amt) return res.status(400).json({ error: `Posição insuficiente. Você tem R$${openAmt.toFixed(2)} aberto no lado ${side.toUpperCase()}` });
+    if (openAmt < amt) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: `Posição insuficiente. Você tem R$${openAmt.toFixed(2)} aberto no lado ${side.toUpperCase()}` });
+    }
 
     const m = market.rows[0];
     const q_yes = parseFloat(m.q_yes);
@@ -188,25 +195,22 @@ router.post('/sell', auth, async (req, res) => {
     const total = q_yes + q_no;
     const current_prob = side === 'yes' ? q_yes / total : q_no / total;
 
-    // Valor de mercado atual da posição sendo vendida
     const sell_value_gross = amt * current_prob;
     const taxa = sell_value_gross * TAXA_CASA;
     const sell_value_net = sell_value_gross - taxa;
 
-    await pool.query('BEGIN');
-
-    // Reduz q_yes ou q_no (movimento inverso da compra)
+    // Reduz q_yes ou q_no
     if (side === 'yes') {
-      await pool.query('UPDATE markets SET q_yes = GREATEST(q_yes - $1, 10) WHERE id = $2', [amt, market_id]);
+      await client.query('UPDATE markets SET q_yes = GREATEST(q_yes - $1, 10) WHERE id = $2', [amt, market_id]);
     } else {
-      await pool.query('UPDATE markets SET q_no = GREATEST(q_no - $1, 10) WHERE id = $2', [amt, market_id]);
+      await client.query('UPDATE markets SET q_no = GREATEST(q_no - $1, 10) WHERE id = $2', [amt, market_id]);
     }
 
     // Credita saldo ao usuário
-    await pool.query('UPDATE users SET balance = balance + $1 WHERE id = $2', [sell_value_net, req.user.id]);
+    await client.query('UPDATE users SET balance = balance + $1 WHERE id = $2', [sell_value_net, req.user.id]);
 
-    // Marca as apostas como 'sold' (distribuindo proporcionalmente)
-    await pool.query(`
+    // Marca as apostas como 'sold'
+    await client.query(`
       WITH bets_to_sell AS (
         SELECT id, amount,
           SUM(amount) OVER (ORDER BY created_at ASC) as running_total
@@ -218,21 +222,21 @@ router.post('/sell', auth, async (req, res) => {
     `, [req.user.id, market_id, side, amt]);
 
     // Registra no histórico
-    const newM = await pool.query('SELECT q_yes, q_no FROM markets WHERE id = $1', [market_id]);
+    const newM = await client.query('SELECT q_yes, q_no FROM markets WHERE id = $1', [market_id]);
     const nq_yes = parseFloat(newM.rows[0].q_yes);
     const nq_no = parseFloat(newM.rows[0].q_no);
     const new_total = nq_yes + nq_no;
     const new_prob_yes = (nq_yes / new_total * 100).toFixed(2);
-    await pool.query(
+    await client.query(
       `INSERT INTO market_history (market_id, prob_yes, prob_no, volume) VALUES ($1,$2,$3,$4)`,
       [market_id, new_prob_yes, (100 - parseFloat(new_prob_yes)).toFixed(2), sell_value_gross]
     );
 
-    await pool.query('COMMIT');
+    const userQ = await client.query('SELECT balance FROM users WHERE id = $1', [req.user.id]);
+    await client.query('COMMIT');
 
-    cache.del(CACHE_KEY_RANKING); // Venda também altera o ranking
+    cache.del(CACHE_KEY_RANKING);
 
-    const userQ = await pool.query('SELECT balance FROM users WHERE id = $1', [req.user.id]);
     res.json({
       ok: true,
       sell_value: parseFloat(sell_value_net.toFixed(2)),
@@ -242,8 +246,10 @@ router.post('/sell', auth, async (req, res) => {
       new_prob_no: Math.round(100 - parseFloat(new_prob_yes))
     });
   } catch (err) {
-    await pool.query('ROLLBACK').catch(() => {});
+    await client.query('ROLLBACK').catch(() => {});
     res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
   }
 });
 
