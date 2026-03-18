@@ -13,39 +13,21 @@ const webhookLimiter = rateLimit({
   message: { error: 'Limite de webhooks excedido' }
 });
 
-function verifyInfinitePaySignature(req) {
-  const secret = process.env.INFINITEPAY_WEBHOOK_SECRET;
-  if (!secret) {
-    // Em desenvolvimento local, permite sem assinatura. Em produção (NODE_ENV=production), rejeita.
+// A InfinitePay não usa HMAC signatures — a segurança é feita via token secreto na própria URL.
+// Configure INFINITEPAY_WEBHOOK_TOKEN no Railway com um valor aleatório longo (ex: openssl rand -hex 32).
+// A URL registrada na InfinitePay deve ser: /deposits/infinitepay/webhook/:token
+function verifyWebhookToken(token) {
+  const expected = process.env.INFINITEPAY_WEBHOOK_TOKEN;
+  if (!expected) {
     if (process.env.NODE_ENV === 'production') {
-      console.error('[SECURITY] INFINITEPAY_WEBHOOK_SECRET não configurada em produção — rejeitando webhook');
+      console.error('[SECURITY] INFINITEPAY_WEBHOOK_TOKEN não configurada em produção — rejeitando webhook');
       return false;
     }
-    console.warn('[WEBHOOK] INFINITEPAY_WEBHOOK_SECRET ausente — validação ignorada (apenas dev)');
+    console.warn('[WEBHOOK] INFINITEPAY_WEBHOOK_TOKEN ausente — validação ignorada (apenas dev)');
     return true;
   }
-
-  const signature =
-    req.headers['x-infinitepay-signature'] ||
-    req.headers['x-signature'] ||
-    req.headers['x-hmac-sha256'];
-
-  if (!signature) {
-    console.warn('[WEBHOOK] Header de assinatura ausente');
-    return false;
-  }
-
-  const rawBody = JSON.stringify(req.body);
-  const expected = crypto
-    .createHmac('sha256', secret)
-    .update(rawBody)
-    .digest('hex');
-
   try {
-    return crypto.timingSafeEqual(
-      Buffer.from(signature.replace(/^sha256=/, '')),
-      Buffer.from(expected)
-    );
+    return crypto.timingSafeEqual(Buffer.from(token || ''), Buffer.from(expected));
   } catch {
     return false;
   }
@@ -88,13 +70,13 @@ function extractInfinitePayWebhook(body) {
   };
 }
 
-router.post('/infinitepay/webhook', webhookLimiter, async (req, res) => {
+router.post('/infinitepay/webhook/:token', webhookLimiter, async (req, res) => {
   const client = await pool.connect();
 
   try {
-    if (!verifyInfinitePaySignature(req)) {
-      console.warn(`[SECURITY] Webhook com assinatura inválida rejeitado — IP: ${req.ip}`);
-      return res.status(401).json({ error: 'Assinatura inválida' });
+    if (!verifyWebhookToken(req.params.token)) {
+      console.warn(`[SECURITY] Webhook com token inválido rejeitado — IP: ${req.ip}`);
+      return res.status(401).json({ error: 'Token inválido' });
     }
 
     const event = extractInfinitePayWebhook(req.body || {});
@@ -208,7 +190,10 @@ router.post('/infinitepay/checkout', auth, async (req, res) => {
     }
 
     const orderNsu = `INF-${req.user.id.slice(0, 8)}-${Date.now()}`;
-    const checkout = await createCheckoutLink({ amount });
+    const token = process.env.INFINITEPAY_WEBHOOK_TOKEN;
+    const backendUrl = process.env.BACKEND_URL || 'https://preditivo-backend-production.up.railway.app';
+    const webhookUrl = token ? `${backendUrl}/deposits/infinitepay/webhook/${token}` : undefined;
+    const checkout = await createCheckoutLink({ amount, webhookUrl });
 
     await client.query('BEGIN');
     const depositResult = await client.query(

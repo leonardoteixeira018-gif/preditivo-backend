@@ -27,7 +27,7 @@ function resolveProviderReference(payload, fallback) {
   );
 }
 
-async function createCheckoutLink({ amount }) {
+async function createCheckoutLink({ amount, webhookUrl }) {
   const handle = String(process.env.INFINITEPAY_HANDLE || '').trim();
   if (!handle) {
     throw new Error('INFINITEPAY_HANDLE nao configurada');
@@ -37,12 +37,17 @@ async function createCheckoutLink({ amount }) {
     handle,
     items: [
       {
-        description: 'Produto de Exemplo',
+        description: 'Deposito Bubuya',
         quantity: 1,
         price: Math.round(amount * 100)
       }
     ]
   };
+
+  // Registra a URL de webhook para notificação automática de pagamento
+  if (webhookUrl) {
+    body.webhook_url = webhookUrl;
+  }
 
   const response = await fetch(`${API_BASE}/invoices/public/checkout/links`, {
     method: 'POST',
