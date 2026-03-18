@@ -253,6 +253,53 @@ async function closeExpiredMarkets() {
   return result.rows.length;
 }
 
+// ---- COMMENTS ----
+const auth = require('../middleware/auth');
+
+// GET /markets/:id/comments — público
+router.get('/:id/comments', async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT c.id, c.content, c.created_at, u.username, u.name, u.avatar_url
+       FROM market_comments c
+       JOIN users u ON u.id = c.user_id
+       WHERE c.market_id = $1
+       ORDER BY c.created_at DESC
+       LIMIT 50`,
+      [req.params.id]
+    );
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /markets/:id/comments — requer auth
+router.post('/:id/comments', auth, async (req, res) => {
+  try {
+    const { content } = req.body;
+    if (!content || content.trim().length < 1 || content.trim().length > 500) {
+      return res.status(400).json({ error: 'Comentário deve ter entre 1 e 500 caracteres.' });
+    }
+    // Verifica se o mercado existe
+    const mkt = await pool.query('SELECT id FROM markets WHERE id = $1', [req.params.id]);
+    if (!mkt.rows.length) return res.status(404).json({ error: 'Mercado não encontrado.' });
+
+    const result = await pool.query(
+      `INSERT INTO market_comments (market_id, user_id, content)
+       VALUES ($1, $2, $3)
+       RETURNING id, content, created_at`,
+      [req.params.id, req.user.id, content.trim()]
+    );
+    const comment = result.rows[0];
+    // Busca dados do usuário para retornar no mesmo formato do GET
+    const userQ = await pool.query('SELECT username, name, avatar_url FROM users WHERE id = $1', [req.user.id]);
+    res.json({ ...comment, ...userQ.rows[0] });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.post('/close-expired', adminAuth, async (req, res) => {
   try {
     const count = await closeExpiredMarkets();

@@ -177,6 +177,32 @@ app.listen(PORT, async () => {
   await pool.query('CREATE INDEX IF NOT EXISTS idx_bets_status_market ON bets(market_id, status)').catch(() => {});
   await pool.query('CREATE INDEX IF NOT EXISTS idx_deposits_user_status ON deposits(user_id, status)').catch(() => {});
 
+  // Comentários em mercados
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS market_comments (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      market_id UUID NOT NULL REFERENCES markets(id) ON DELETE CASCADE,
+      user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      content TEXT NOT NULL CHECK (char_length(content) BETWEEN 1 AND 500),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `).catch(() => {});
+  await pool.query('CREATE INDEX IF NOT EXISTS idx_market_comments_market_id ON market_comments(market_id, created_at DESC)').catch(() => {});
+
+  // Push subscriptions
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS push_subscriptions (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      subscription JSONB NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `).catch(() => {});
+  await pool.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_push_subscriptions_user_endpoint
+    ON push_subscriptions(user_id, (subscription->>'endpoint'))
+  `).catch(() => {});
+
   // Auto-fechar mercados expirados a cada 5 minutos
   const { closeExpiredMarkets } = require('./routes/markets');
   setInterval(() => closeExpiredMarkets().catch(err =>

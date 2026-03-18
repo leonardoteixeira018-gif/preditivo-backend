@@ -135,3 +135,14 @@ FROM users u
 LEFT JOIN bets b ON b.user_id = u.id
 GROUP BY u.id, u.username, u.balance
 ORDER BY profit DESC, u.created_at ASC;
+
+
+-- ---- Comentários em mercados ----
+CREATE TABLE IF NOT EXISTS market_comments (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  market_id UUID NOT NULL REFERENCES markets(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  content TEXT NOT NULL CHECK (char_length(content) BETWEEN 1 AND 500),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_market_comments_market_id ON market_comments(market_id, created_at DESC);

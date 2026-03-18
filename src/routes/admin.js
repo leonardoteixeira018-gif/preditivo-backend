@@ -644,6 +644,27 @@ router.post('/markets/:id/resolve', async (req, res) => {
       ).catch(() => {});
     }
 
+    // Push notifications de resultado (fire-and-forget)
+    if (newlyProcessed > 0) {
+      try {
+        const { sendPushToUser } = require('./notifications');
+        const wonByUserPush = {};
+        wonResult.rows.forEach(b => {
+          wonByUserPush[b.user_id] = (wonByUserPush[b.user_id] || 0) + (parseFloat(b.potential_payout) || 0);
+        });
+        allProcessedUids.forEach(uid => {
+          const won = !!wonByUserPush[uid];
+          const payout = wonByUserPush[uid] || 0;
+          sendPushToUser(
+            uid,
+            won ? '🎉 Você ganhou!' : '📊 Mercado encerrado',
+            won ? `+R$${payout.toFixed(2)} creditado — ${m.title}` : `${m.title} — resultado: ${outcome === 'yes' ? 'SIM' : 'NÃO'}`,
+            `/market.html?id=${req.params.id}`
+          ).catch(() => {});
+        });
+      } catch(e) { /* web-push opcional */ }
+    }
+
     // Emails de resultado (fire-and-forget, em paralelo)
     if (newlyProcessed > 0) {
       const { sendEmail } = require('../lib/email');

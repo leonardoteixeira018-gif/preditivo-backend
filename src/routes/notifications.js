@@ -2,6 +2,51 @@ const express = require('express');
 const router = express.Router();
 const pool = require('../lib/db');
 const auth = require('../middleware/auth');
+const webpush = require('web-push');
+
+// Configurar VAPID apenas se as chaves estiverem definidas
+if (process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
+  webpush.setVapidDetails(
+    process.env.VAPID_MAILTO || 'mailto:suporte@bubuya.com.br',
+    process.env.VAPID_PUBLIC_KEY,
+    process.env.VAPID_PRIVATE_KEY
+  );
+}
+const vapidConfigured = !!(process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY);
+
+// POST /notifications/push-subscribe — registrar subscription de push
+router.post('/push-subscribe', auth, async (req, res) => {
+  try {
+    const { subscription } = req.body;
+    if (!subscription || !subscription.endpoint) {
+      return res.status(400).json({ error: 'subscription inválida' });
+    }
+    await pool.query(
+      `INSERT INTO push_subscriptions (user_id, subscription)
+       VALUES ($1, $2)
+       ON CONFLICT (user_id, (subscription->>'endpoint')) DO NOTHING`,
+      [req.user.id, JSON.stringify(subscription)]
+    );
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /notifications/push-unsubscribe — remover subscription
+router.post('/push-unsubscribe', auth, async (req, res) => {
+  try {
+    const { endpoint } = req.body;
+    if (!endpoint) return res.status(400).json({ error: 'endpoint obrigatório' });
+    await pool.query(
+      `DELETE FROM push_subscriptions WHERE user_id = $1 AND subscription->>'endpoint' = $2`,
+      [req.user.id, endpoint]
+    );
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
 // GET /notifications/my — notificações do usuário autenticado
 router.get('/my', auth, async (req, res) => {
@@ -36,3 +81,32 @@ router.patch('/read-all', auth, async (req, res) => {
 });
 
 module.exports = router;
+
+// Helper — enviar push para um usuário (exportado para uso em admin.js)
+async function sendPushToUser(userId, title, body, url = '/') {
+  if (!vapidConfigured) return;
+  try {
+    const subs = await pool.query(
+      'SELECT id, subscription FROM push_subscriptions WHERE user_id = $1',
+      [userId]
+    );
+    const expired = [];
+    await Promise.allSettled(subs.rows.map(async (row) => {
+      try {
+        await webpush.sendNotification(row.subscription, JSON.stringify({ title, body, url }));
+      } catch (err) {
+        // 410 Gone = subscription expirada, remover
+        if (err.statusCode === 410 || err.statusCode === 404) {
+          expired.push(row.id);
+        }
+      }
+    }));
+    if (expired.length > 0) {
+      await pool.query('DELETE FROM push_subscriptions WHERE id = ANY($1)', [expired]);
+    }
+  } catch (err) {
+    console.error('sendPushToUser error:', err.message);
+  }
+}
+
+module.exports.sendPushToUser = sendPushToUser;
