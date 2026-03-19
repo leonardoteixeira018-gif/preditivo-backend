@@ -1605,6 +1605,30 @@ router.get('/users/:userId/compliance', async (req, res) => {
 });
 
 /**
+ * POST /admin/users/:userId/coaf-flag
+ * Insere um flag COAF manual para o usuário.
+ */
+router.post('/users/:userId/coaf-flag', async (req, res) => {
+  const { userId } = req.params;
+  const { reason } = req.body;
+  try {
+    const user = await pool.query('SELECT id, username FROM users WHERE id = $1', [userId]);
+    if (!user.rows.length) return res.status(404).json({ error: 'Usuário não encontrado' });
+
+    await pool.query(`
+      INSERT INTO coaf_flags (user_id, month_total, threshold, status, resolution_notes)
+      VALUES ($1, 0, 10000, 'pending', $2)
+    `, [userId, reason || 'Flag manual inserido pelo admin']);
+
+    logger.info('Manual COAF flag inserted', { userId, username: user.rows[0].username });
+    res.json({ ok: true, message: 'Flag COAF inserido com sucesso' });
+  } catch (err) {
+    logger.error('Manual COAF flag error', { userId, error: err.message });
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
  * PATCH /admin/users/:userId/compliance
  * Atualiza notas internas, nível de risco e overrides de compliance.
  */
