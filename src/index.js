@@ -65,19 +65,20 @@ const generalLimiter = rateLimit({
   legacyHeaders: false,
 });
 
-// adminLoginLimiter: proteção contra brute force do login admin (muito agressivo)
+// adminLoginLimiter: proteção contra brute force do login admin
 const adminLoginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutos
-  max: 3, // Máximo 3 tentativas
+  max: 10, // 10 tentativas — suficiente para erros de digitação normais
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'Muitas tentativas de login admin. Tente novamente em 15 minutos.' }
 });
 
-// adminLimiter: limite agressivo para operações admin (5 req/min)
+// adminLimiter: limite generoso para uso normal do painel admin
+// O painel faz múltiplas chamadas paralelas por aba/drawer, então precisa de margem
 const adminLimiter = rateLimit({
   windowMs: 1 * 60 * 1000, // 1 minuto
-  max: 5, // Máximo 5 requisições por minuto
+  max: 300, // 300 req/min — ~5 req/s, mais que suficiente para 1 admin humano
   message: { error: 'Limite de requisições admin excedido. Tente novamente em 1 minuto.' },
   standardHeaders: true,
   legacyHeaders: false,
