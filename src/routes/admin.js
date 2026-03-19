@@ -1557,7 +1557,7 @@ router.post('/bots/reload-balances', async (req, res) => {
 router.get('/users/:userId/compliance', async (req, res) => {
   const { userId } = req.params;
   try {
-    const [userRes, kycRes, pepRes, coafRes, suitRes] = await Promise.all([
+    const [userRes, kycRes, pepRes, coafRes, suitRes, riskTermRes] = await Promise.all([
       pool.query(`
         SELECT
           u.id, u.username, u.email, u.full_name, u.cpf,
@@ -1568,6 +1568,7 @@ router.get('/users/:userId/compliance', async (req, res) => {
           u.sanctions_status, u.sanctions_checked_at,
           u.suitability_profile, u.suitability_score,
           u.suitability_completed_at, u.suitability_expires_at,
+          u.risk_term_accepted_at, u.risk_term_version,
           u.admin_notes, u.risk_level, u.last_reviewed_at, u.reviewed_by
         FROM users u WHERE u.id = $1
       `, [userId]),
@@ -1587,7 +1588,12 @@ router.get('/users/:userId/compliance', async (req, res) => {
         `SELECT id, profile, score, answers, completed_at, expires_at, overridden_by
          FROM suitability_responses WHERE user_id = $1 ORDER BY completed_at DESC LIMIT 5`,
         [userId]
-      )
+      ),
+      pool.query(
+        `SELECT term_version, accepted_at, ip_address FROM risk_term_acceptances
+         WHERE user_id = $1 ORDER BY accepted_at DESC LIMIT 5`,
+        [userId]
+      ).catch(() => ({ rows: [] }))
     ]);
 
     if (!userRes.rows.length) {
@@ -1600,7 +1606,8 @@ router.get('/users/:userId/compliance', async (req, res) => {
       kyc_reviews: kycRes.rows,
       pep_reviews: pepRes.rows,
       coaf_flags: coafRes.rows,
-      suitability_history: suitRes.rows
+      suitability_history: suitRes.rows,
+      risk_term_history: riskTermRes.rows,
     });
   } catch (err) {
     logger.error('User compliance detail error', { userId, error: err.message });
