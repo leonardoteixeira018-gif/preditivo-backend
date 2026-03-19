@@ -1557,7 +1557,7 @@ router.get('/users/:userId/compliance', async (req, res) => {
       pool.query(`
         SELECT
           u.id, u.username, u.email, u.full_name, u.cpf,
-          u.date_of_birth, u.balance, u.created_at, u.role,
+          u.date_of_birth, u.balance, u.created_at,
           u.kyc_status, u.kyc_submitted_at, u.kyc_approved_at,
           u.kyc_rejected_at, u.kyc_rejection_reason, u.kyc_provider_id,
           u.pep_status, u.pep_checked_at,
