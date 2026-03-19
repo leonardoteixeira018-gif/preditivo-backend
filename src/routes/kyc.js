@@ -147,23 +147,37 @@ router.post('/submit', auth, async (req, res) => {
 
     // ── DIDIT: fluxo assíncrono (redirect para verificação de documento) ────────
     if (BUREAU_PROVIDER === 'didit') {
-      // Salva dados pessoais e coloca status como 'submitted'
+      // 1. Criar sessão no Didit PRIMEIRO — se falhar, não alteramos o DB
+      const callbackUrl = `${APP_URL}/kyc.html?didit_return=1`;
+      let session;
+      try {
+        session = await createDiditSession({
+          userId:      req.user.id,
+          fullName:    full_name.trim(),
+          cpf:         cpfValidation.cleaned,
+          dateOfBirth: date_of_birth,
+          callbackUrl,
+        });
+      } catch (diditErr) {
+        logger.error('[DIDIT] Falha ao criar sessão — sem alteração no DB', {
+          userId: req.user.id,
+          error:  diditErr.message,
+        });
+        // Retorna erro amigável mas não altera kyc_status
+        return res.status(503).json({
+          error: 'Serviço de verificação de identidade temporariamente indisponível. Tente novamente em instantes.',
+        });
+      }
+
+      // 2. Sessão criada com sucesso → agora salva no DB
       await pool.query(`
         UPDATE users SET
           cpf = $1, full_name = $2, date_of_birth = $3,
           kyc_status = 'submitted', kyc_submitted_at = NOW(),
-          kyc_rejected_at = NULL, kyc_rejection_reason = NULL
-        WHERE id = $4
-      `, [cpfValidation.cleaned, full_name.trim(), date_of_birth, req.user.id]);
-
-      const callbackUrl = `${APP_URL}/kyc.html?didit_return=1`;
-      const session = await createDiditSession({
-        userId:      req.user.id,
-        fullName:    full_name.trim(),
-        cpf:         cpfValidation.cleaned,
-        dateOfBirth: date_of_birth,
-        callbackUrl,
-      });
+          kyc_rejected_at = NULL, kyc_rejection_reason = NULL,
+          kyc_provider_id = $4
+        WHERE id = $5
+      `, [cpfValidation.cleaned, full_name.trim(), date_of_birth, session.session_id, req.user.id]);
 
       await pool.query(`
         INSERT INTO kyc_reviews (user_id, action, actor, notes, provider, provider_id)
@@ -175,12 +189,12 @@ router.post('/submit', auth, async (req, res) => {
       }, req.ip);
 
       return res.json({
-        ok:            true,
-        kyc_status:    'submitted',
-        provider:      'didit',
-        session_id:    session.session_id,
+        ok:               true,
+        kyc_status:       'submitted',
+        provider:         'didit',
+        session_id:       session.session_id,
         verification_url: session.verification_url,
-        message:       'Redirecionando para verificação de identidade...',
+        message:          'Redirecionando para verificação de identidade...',
       });
     }
 
@@ -512,11 +526,12 @@ router.post('/didit/webhook', express.raw({ type: 'application/json' }), async (
 
     const payload   = JSON.parse(rawBody.toString());
     const { session_id, status, vendor_data } = payload;
-    const userId    = parseInt(vendor_data);
+    // vendor_data é o UUID do usuário (String) — nunca usar parseInt
+    const userId    = vendor_data ? String(vendor_data).trim() : null;
 
     logger.info('[DIDIT-WEBHOOK] Recebido', { session_id, status, userId });
 
-    if (!userId || isNaN(userId)) {
+    if (!userId) {
       logger.warn('[DIDIT-WEBHOOK] vendor_data inválido', { vendor_data });
       return res.json({ received: true });
     }

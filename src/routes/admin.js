@@ -1672,38 +1672,75 @@ router.patch('/users/:userId/compliance', async (req, res) => {
  */
 router.delete('/users/:userId', async (req, res) => {
   const { userId } = req.params;
+  const client = await pool.connect();
   try {
+    await client.query('BEGIN');
+
     // Verificar se usuário existe e não tem saldo real
-    const check = await pool.query(
+    const check = await client.query(
       'SELECT username, email, balance FROM users WHERE id = $1',
       [userId]
     );
     if (!check.rows.length) {
+      await client.query('ROLLBACK');
       return res.status(404).json({ error: 'Usuário não encontrado' });
     }
     const u = check.rows[0];
     if (parseFloat(u.balance) > 0) {
+      await client.query('ROLLBACK');
       return res.status(400).json({
         error: `Usuário tem saldo de R$${parseFloat(u.balance).toFixed(2)}. Zere o saldo antes de excluir.`
       });
     }
 
-    // Excluir dados relacionados em cascata
-    await pool.query('DELETE FROM kyc_reviews WHERE user_id = $1', [userId]);
-    await pool.query('DELETE FROM pep_reviews WHERE user_id = $1', [userId]);
-    await pool.query('DELETE FROM coaf_flags WHERE user_id = $1', [userId]);
-    await pool.query('DELETE FROM suitability_responses WHERE user_id = $1', [userId]);
-    await pool.query('DELETE FROM push_subscriptions WHERE user_id = $1', [userId]);
-    await pool.query('DELETE FROM user_audit_log WHERE user_id = $1', [userId]);
-    await pool.query('DELETE FROM bets WHERE user_id = $1', [userId]);
-    await pool.query('DELETE FROM transactions WHERE user_id = $1', [userId]);
-    await pool.query('DELETE FROM users WHERE id = $1', [userId]);
+    // Corrigir auto-referência (outros usuários indicados por este)
+    // users.referred_by não tem ON DELETE CASCADE
+    await client.query('UPDATE users SET referred_by = NULL WHERE referred_by = $1', [userId]);
+
+    // Excluir tabelas filhas que podem não ter CASCADE ou têm nomes distintos
+    // A maioria tem ON DELETE CASCADE mas listamos explicitamente por segurança
+    const tables = [
+      'kyc_reviews',
+      'pep_reviews',
+      'coaf_flags',
+      'suitability_responses',
+      'user_audit_logs',
+      'email_verifications',
+      'market_comments',
+      'referral_bonuses',       // referrer_id e referred_id ambos apontam para users
+      'bets',
+      'deposits',
+      'withdrawals',
+    ];
+
+    for (const table of tables) {
+      // Tenta a coluna user_id; referral_bonuses tem referrer_id/referred_id
+      if (table === 'referral_bonuses') {
+        await client.query('DELETE FROM referral_bonuses WHERE referrer_id = $1 OR referred_id = $1', [userId]);
+      } else {
+        await client.query(`DELETE FROM ${table} WHERE user_id = $1`, [userId]);
+      }
+    }
+
+    // Tabelas opcionais (podem não existir dependendo da versão do schema)
+    const optionalTables = ['push_subscriptions', 'notifications', 'bonus_transactions'];
+    for (const table of optionalTables) {
+      await client.query(`DELETE FROM ${table} WHERE user_id = $1`, [userId]).catch(() => {});
+    }
+
+    // Deletar o usuário
+    await client.query('DELETE FROM users WHERE id = $1', [userId]);
+
+    await client.query('COMMIT');
 
     logger.warn('User account deleted by admin', { userId, username: u.username, email: u.email });
     res.json({ ok: true, message: `Conta "${u.username}" (${u.email}) excluída com sucesso.` });
   } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
     logger.error('User delete error', { userId, error: err.message });
     res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
   }
 });
 

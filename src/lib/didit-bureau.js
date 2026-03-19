@@ -37,14 +37,15 @@ async function createDiditSession({ userId, fullName, cpf, dateOfBirth, callback
   const firstName = parts[0] || '';
   const lastName  = parts.slice(1).join(' ') || '';
 
+  // Nota: expected_details é opcional. Incluímos apenas first_name e last_name
+  // pois date_of_birth não é suportado por todos os workflows Didit v3.
   const body = {
     workflow_id: workflowId,
     callback:    callbackUrl,
     vendor_data: String(userId),
     expected_details: {
-      first_name:    firstName,
-      last_name:     lastName,
-      date_of_birth: dateOfBirth, // YYYY-MM-DD
+      first_name: firstName,
+      last_name:  lastName,
     },
   };
 
