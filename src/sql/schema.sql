@@ -159,8 +159,25 @@ CREATE TABLE IF NOT EXISTS audit_logs (
   timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- Índices para queries rápidas de auditoria
+-- Índices para queries rápidas de auditoria admin
 CREATE INDEX IF NOT EXISTS idx_audit_action_timestamp ON audit_logs(action, timestamp DESC);
 CREATE INDEX IF NOT EXISTS idx_audit_admin_timestamp ON audit_logs(admin_id, timestamp DESC);
 CREATE INDEX IF NOT EXISTS idx_audit_resource ON audit_logs(resource_type, resource_id);
 CREATE INDEX IF NOT EXISTS idx_audit_timestamp ON audit_logs(timestamp DESC);
+
+-- ---- Auditoria de ações de usuário ----
+CREATE TABLE IF NOT EXISTS user_audit_logs (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  action VARCHAR(100) NOT NULL,
+  resource_type VARCHAR(50),
+  resource_id UUID,
+  details JSONB,
+  ip_address VARCHAR(50),
+  timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Índices para queries rápidas de auditoria de usuário
+CREATE INDEX IF NOT EXISTS idx_user_audit_user_id ON user_audit_logs(user_id, timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_user_audit_action ON user_audit_logs(action, timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_user_audit_timestamp ON user_audit_logs(timestamp DESC);

@@ -8,6 +8,7 @@ const app = express();
 app.set('trust proxy', 1); // Confia no primeiro proxy (Railway/Vercel)
 
 const pool = require('./lib/db');
+const logger = require('./lib/logger');
 const { APP_URL } = require('./lib/appConfig');
 const requestLogger = require('./middleware/requestLogger');
 
@@ -110,20 +111,30 @@ app.use('/transak', require('./routes/transak'));
 app.use('/notifications', require('./routes/notifications'));
 
 app.get('/health', async (req, res) => {
+  const checks = {
+    database: 'unknown',
+    memory: process.memoryUsage(),
+    uptime_s: Math.floor(process.uptime()),
+    timestamp: new Date().toISOString()
+  };
+
   try {
+    // Verificar DB
     await pool.query('SELECT 1');
-    res.json({
-      status: 'ok',
-      timestamp: new Date().toISOString(),
-      uptime_s: Math.floor(process.uptime()),
-      db: 'connected'
+    checks.database = 'connected';
+
+    res.status(200).json({
+      status: 'healthy',
+      ...checks,
+      version: process.env.npm_package_version || '1.0.0'
     });
   } catch (err) {
+    logger.error('Health check failed', { error: err.message });
+
     res.status(503).json({
-      status: 'error',
-      timestamp: new Date().toISOString(),
-      db: 'disconnected',
-      error: err.message
+      status: 'unhealthy',
+      ...checks,
+      database: 'disconnected'
     });
   }
 });
