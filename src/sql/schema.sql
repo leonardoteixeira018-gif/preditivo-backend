@@ -146,3 +146,21 @@ CREATE TABLE IF NOT EXISTS market_comments (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_market_comments_market_id ON market_comments(market_id, created_at DESC);
+
+-- ---- Auditoria de ações admin ----
+CREATE TABLE IF NOT EXISTS audit_logs (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  action VARCHAR(100) NOT NULL,
+  resource_type VARCHAR(50) NOT NULL,
+  resource_id UUID,
+  admin_id UUID,
+  ip_address VARCHAR(50),
+  details JSONB,
+  timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Índices para queries rápidas de auditoria
+CREATE INDEX IF NOT EXISTS idx_audit_action_timestamp ON audit_logs(action, timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_admin_timestamp ON audit_logs(admin_id, timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_resource ON audit_logs(resource_type, resource_id);
+CREATE INDEX IF NOT EXISTS idx_audit_timestamp ON audit_logs(timestamp DESC);

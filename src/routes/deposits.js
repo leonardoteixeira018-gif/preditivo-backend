@@ -13,9 +13,13 @@ const webhookLimiter = rateLimit({
   message: { error: 'Limite de webhooks excedido' }
 });
 
-// A InfinitePay não usa HMAC signatures — a segurança é feita via token secreto na própria URL.
-// Configure INFINITEPAY_WEBHOOK_TOKEN no Railway com um valor aleatório longo (ex: openssl rand -hex 32).
+// A InfinitePay pode usar tanto token na URL quanto HMAC signature no header.
+// Configure INFINITEPAY_WEBHOOK_TOKEN e INFINITEPAY_WEBHOOK_SECRET no Railway.
 // A URL registrada na InfinitePay deve ser: /deposits/infinitepay/webhook/:token
+
+/**
+ * Valida token do webhook (segurança via URL)
+ */
 function verifyWebhookToken(token) {
   const expected = process.env.INFINITEPAY_WEBHOOK_TOKEN;
   if (!expected) {
@@ -29,6 +33,54 @@ function verifyWebhookToken(token) {
   try {
     return crypto.timingSafeEqual(Buffer.from(token || ''), Buffer.from(expected));
   } catch {
+    return false;
+  }
+}
+
+/**
+ * Valida assinatura HMAC do webhook (segurança via payload)
+ * InfinitePay envia X-Signature ou X-Webhook-Signature header com HMAC-SHA256 do payload
+ */
+function validateInfinitePaySignature(req) {
+  // Tentar encontrar header de signature (case-insensitive)
+  const signature =
+    req.headers['x-infinitepay-signature'] ||
+    req.headers['x-signature'] ||
+    req.headers['x-webhook-signature'] ||
+    req.headers['signature'];
+
+  const secret = process.env.INFINITEPAY_WEBHOOK_SECRET;
+
+  // Se não estiver configurado, loggar warning mas não rejeitar (compatibilidade)
+  if (!signature || !secret) {
+    console.warn('[WEBHOOK] Webhook signature validation não configurada (header ou secret ausente)');
+    return true;
+  }
+
+  try {
+    // Raw body como string (não parsed)
+    const rawBody = JSON.stringify(req.body || {});
+
+    // Calcular HMAC esperado (SHA256)
+    const expectedSignature = crypto
+      .createHmac('sha256', secret)
+      .update(rawBody)
+      .digest('hex');
+
+    // Comparação segura contra timing attacks
+    const valid = crypto.timingSafeEqual(
+      Buffer.from(signature),
+      Buffer.from(expectedSignature)
+    );
+
+    if (!valid) {
+      console.warn(`[SECURITY] Webhook com assinatura inválida rejeitado — IP: ${req.ip}`);
+      return false;
+    }
+
+    return true;
+  } catch (err) {
+    console.warn(`[SECURITY] Erro ao validar webhook signature: ${err.message}`);
     return false;
   }
 }
@@ -74,9 +126,16 @@ router.post('/infinitepay/webhook/:token', webhookLimiter, async (req, res) => {
   const client = await pool.connect();
 
   try {
+    // Validar token na URL PRIMEIRO
     if (!verifyWebhookToken(req.params.token)) {
       console.warn(`[SECURITY] Webhook com token inválido rejeitado — IP: ${req.ip}`);
       return res.status(401).json({ error: 'Token inválido' });
+    }
+
+    // Validar assinatura HMAC do payload SEGUNDO
+    if (!validateInfinitePaySignature(req)) {
+      console.warn(`[SECURITY] Webhook com assinatura inválida rejeitado — IP: ${req.ip}`);
+      return res.status(401).json({ error: 'Assinatura inválida' });
     }
 
     const event = extractInfinitePayWebhook(req.body || {});

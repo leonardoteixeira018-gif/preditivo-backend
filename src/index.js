@@ -50,13 +50,32 @@ const generalLimiter = rateLimit({
   legacyHeaders: false,
 });
 
-// adminLimiter: admin já protegido por adminAuth, limite alto para operações intensivas
-const adminLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 5000,
-  message: { error: 'Limite de requisições admin excedido. Tente novamente mais tarde.' },
+// adminLoginLimiter: proteção contra brute force do login admin (muito agressivo)
+const adminLoginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutos
+  max: 3, // Máximo 3 tentativas
   standardHeaders: true,
   legacyHeaders: false,
+  message: { error: 'Muitas tentativas de login admin. Tente novamente em 15 minutos.' }
+});
+
+// adminLimiter: limite agressivo para operações admin (5 req/min)
+const adminLimiter = rateLimit({
+  windowMs: 1 * 60 * 1000, // 1 minuto
+  max: 5, // Máximo 5 requisições por minuto
+  message: { error: 'Limite de requisições admin excedido. Tente novamente em 1 minuto.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+// webhookLimiter: proteção para endpoints de webhook
+const webhookLimiter = rateLimit({
+  windowMs: 1 * 60 * 1000, // 1 minuto
+  max: 20, // Máximo 20 webhooks por minuto
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: (req) => !req.path.includes('webhook'),
+  message: { error: 'Webhook rate limit exceeded' }
 });
 
 // Limitadores de auth
@@ -65,15 +84,22 @@ app.use('/auth/register', authLimiter);
 app.use('/auth/forgot-password', authLimiter);
 app.use('/auth/reset-password', authLimiter);
 
+// Admin login: limiter específico muito agressivo
+app.use('/admin/login', adminLoginLimiter);
+
 // Admin: limiter próprio + router ANTES do generalLimiter.
 // Quando o adminRouter responde, a req encerra — generalLimiter nunca executa para /admin/*
 app.use('/admin', adminLimiter);
 app.use('/admin', require('./routes/admin'));
 
+// Webhook: limiter específico
+app.use('/deposits/infinitepay/webhook', webhookLimiter);
+
 // General limiter para todas as demais rotas (não afeta /admin)
 app.use(generalLimiter);
 
 app.use('/auth', require('./routes/auth'));
+app.use('/admin', require('./routes/admin-auth')); // Novo endpoint de login admin
 app.use('/markets', require('./routes/markets'));
 app.use('/bets', require('./routes/bets'));
 app.use('/ranking', require('./routes/ranking'));

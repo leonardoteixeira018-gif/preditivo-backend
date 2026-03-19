@@ -2,6 +2,7 @@ const router = require('express').Router();
 const pool = require('../lib/db');
 const adminAuth = require('../middleware/adminAuth');
 const { processReferralBonus } = require('./deposits');
+const { logAudit } = require('../lib/audit');
 
 router.use(adminAuth);
 
@@ -289,6 +290,21 @@ router.post('/deposits/:id/confirm', async (req, res) => {
          <p>Seu saldo ja foi atualizado. Boa sorte!</p>`
       );
     }
+
+    // Log de auditoria
+    await logAudit({
+      action: 'deposit_confirmed',
+      resourceType: 'deposit',
+      resourceId: req.params.id,
+      adminId: null, // TODO: extrair de JWT quando implementado
+      ipAddress: req.ip,
+      details: {
+        amount: dep.rows[0].amount,
+        userId: dep.rows[0].user_id,
+        method: dep.rows[0].method
+      }
+    });
+
     res.json({ ok: true });
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
@@ -728,6 +744,23 @@ router.post('/markets/:id/resolve', async (req, res) => {
       total_paid: totalPaidFinal.toFixed(2), total_wagered: totalWagered.toFixed(2),
       house_retained: houseRetained.toFixed(2), newly_processed: newlyProcessed
     }));
+
+    // Log de auditoria
+    await logAudit({
+      action: 'market_resolved',
+      resourceType: 'market',
+      resourceId: req.params.id,
+      adminId: null, // TODO: extrair de JWT quando implementado
+      ipAddress: req.ip,
+      details: {
+        title: m.title,
+        outcome,
+        winners: parseInt(stats.total_winners),
+        losers: parseInt(stats.total_losers),
+        total_paid: totalPaidFinal,
+        total_wagered: totalWagered
+      }
+    });
 
     res.json({
       ok: true,
