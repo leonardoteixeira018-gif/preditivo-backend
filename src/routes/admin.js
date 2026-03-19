@@ -1718,11 +1718,10 @@ router.delete('/users/:userId', async (req, res) => {
     // referral_bonuses tem duas FKs para users (referrer_id e referred_id)
     await client.query('DELETE FROM referral_bonuses WHERE referrer_id = $1 OR referred_id = $1', [userId]);
 
-    // Tabelas opcionais — deletar com .catch() pois podem não existir em todos os ambientes
+    // Tabelas opcionais com user_id — deletar com .catch() pois podem não existir em todos ambientes
     const optionalTables = [
       'push_subscriptions',
       'notifications',
-      'blacklisted_tokens',
       'user_audit_logs',
       'audit_logs',
       'bonus_transactions',
@@ -1730,6 +1729,7 @@ router.delete('/users/:userId', async (req, res) => {
     for (const table of optionalTables) {
       await client.query(`DELETE FROM ${table} WHERE user_id = $1`, [userId]).catch(() => {});
     }
+    // blacklisted_tokens não tem user_id (apenas token + expired_at) — ignorar
 
     // Deletar o usuário
     await client.query('DELETE FROM users WHERE id = $1', [userId]);
