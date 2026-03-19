@@ -1557,7 +1557,7 @@ router.post('/bots/reload-balances', async (req, res) => {
 router.get('/users/:userId/compliance', async (req, res) => {
   const { userId } = req.params;
   try {
-    const [userRes, kycRes, pepRes, coafRes, suitRes, riskTermRes] = await Promise.all([
+    const [userRes, kycRes, pepRes, coafRes, suitRes, riskTermRes, lgpdRes] = await Promise.all([
       pool.query(`
         SELECT
           u.id, u.username, u.email, u.full_name, u.cpf,
@@ -1569,6 +1569,7 @@ router.get('/users/:userId/compliance', async (req, res) => {
           u.suitability_profile, u.suitability_score,
           u.suitability_completed_at, u.suitability_expires_at,
           u.risk_term_accepted_at, u.risk_term_version,
+          u.lgpd_consent_at, u.lgpd_consent_ip, u.data_deletion_requested_at,
           u.admin_notes, u.risk_level, u.last_reviewed_at, u.reviewed_by
         FROM users u WHERE u.id = $1
       `, [userId]),
@@ -1593,6 +1594,11 @@ router.get('/users/:userId/compliance', async (req, res) => {
         `SELECT term_version, accepted_at, ip_address FROM risk_term_acceptances
          WHERE user_id = $1 ORDER BY accepted_at DESC LIMIT 5`,
         [userId]
+      ).catch(() => ({ rows: [] })),
+      pool.query(
+        `SELECT consent_type, policy_version, accepted_at, ip_address FROM lgpd_consents
+         WHERE user_id = $1 ORDER BY accepted_at DESC LIMIT 5`,
+        [userId]
       ).catch(() => ({ rows: [] }))
     ]);
 
@@ -1608,6 +1614,7 @@ router.get('/users/:userId/compliance', async (req, res) => {
       coaf_flags: coafRes.rows,
       suitability_history: suitRes.rows,
       risk_term_history: riskTermRes.rows,
+      lgpd_history: lgpdRes.rows,
     });
   } catch (err) {
     logger.error('User compliance detail error', { userId, error: err.message });
@@ -1952,6 +1959,29 @@ router.post('/simulate/suitability', async (req, res) => {
     });
   } catch (err) {
     logger.error('[SANDBOX] Erro na simulação Suitability', { error: err.message });
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── BLOCO 7: LGPD ─────────────────────────────────────────────────────────────
+
+/**
+ * GET /admin/data-deletion-requests
+ * Lista todas as solicitações de exclusão de dados pendentes.
+ */
+router.get('/data-deletion-requests', async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT
+        d.id, d.user_id, d.requested_at, d.status, d.ip_address, d.notes,
+        u.username, u.email, u.balance
+      FROM data_deletion_requests d
+      JOIN users u ON u.id = d.user_id
+      ORDER BY d.requested_at DESC
+    `);
+    res.json({ ok: true, requests: result.rows });
+  } catch (err) {
+    logger.error('data-deletion-requests error', { error: err.message });
     res.status(500).json({ error: err.message });
   }
 });

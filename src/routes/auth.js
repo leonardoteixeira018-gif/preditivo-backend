@@ -27,7 +27,7 @@ function generateCode(username) {
 
 router.post('/register', async (req, res) => {
   try {
-    const { name, email, password, ref } = req.body;
+    const { name, email, password, ref, lgpd_consent } = req.body;
     const cleanName = String(name || '').trim();
     const normalizedEmail = String(email || '').trim().toLowerCase();
 
@@ -36,6 +36,10 @@ router.post('/register', async (req, res) => {
       ip: req.ip,
       hasReferral: !!ref
     });
+
+    if (!lgpd_consent) {
+      return res.status(400).json({ error: 'Consentimento LGPD obrigatório' });
+    }
 
     if (!cleanName || !normalizedEmail || !password) {
       logger.warn('Registration validation failed', {
@@ -79,7 +83,10 @@ router.post('/register', async (req, res) => {
         name: cleanName,
         password_hash: hash,
         referral_code: referralCode,
-        referred_by: referrerId
+        referred_by: referrerId,
+        lgpd_consent: true,
+        lgpd_ip: req.ip,
+        lgpd_user_agent: req.headers['user-agent'] || null
       },
       subject: `Confirme seu cadastro na ${APP_BRAND}`,
       heading: 'Confirme seu cadastro',
@@ -146,6 +153,21 @@ router.post('/register/verify', async (req, res) => {
        RETURNING id, username AS name, email, balance, bonus_balance`,
       [payload.name, normalizedEmail, payload.password_hash, payload.referral_code, payload.referred_by]
     );
+
+    const newUserId = result.rows[0].id;
+
+    // BLOCO 7: LGPD — registrar consentimento de privacidade
+    if (payload.lgpd_consent) {
+      await client.query(
+        `INSERT INTO lgpd_consents (user_id, consent_type, policy_version, ip_address, user_agent)
+         VALUES ($1, 'registration', 'v1.0', $2, $3)`,
+        [newUserId, payload.lgpd_ip || null, payload.lgpd_user_agent || null]
+      ).catch(() => {});
+      await client.query(
+        `UPDATE users SET lgpd_consent_at = NOW(), lgpd_consent_ip = $1 WHERE id = $2`,
+        [payload.lgpd_ip || null, newUserId]
+      ).catch(() => {});
+    }
 
     await client.query('COMMIT');
     const { sendEmail } = require('../lib/email');
@@ -536,6 +558,122 @@ router.post('/accept-risk-term', auth, async (req, res) => {
   } catch (err) {
     logger.error('accept-risk-term error', { error: err.message });
     res.status(500).json({ error: 'Erro interno' });
+  }
+});
+
+// ── BLOCO 7: LGPD (Lei 13.709/2018) ──────────────────────────────────────────
+
+// GET /auth/my-data — Direito de acesso (Art. 18 LGPD)
+router.get('/my-data', auth, async (req, res) => {
+  try {
+    const userId = req.user.id;
+
+    const [userRes, betsRes, depositsRes, withdrawalsRes, kycRes, suitRes] = await Promise.all([
+      pool.query(
+        `SELECT id, username, email, full_name, cpf, date_of_birth,
+                balance, bonus_balance, created_at, email_verified_at,
+                kyc_status, kyc_submitted_at, kyc_approved_at,
+                suitability_profile, suitability_score, suitability_completed_at,
+                risk_term_accepted_at, risk_term_version,
+                lgpd_consent_at, lgpd_consent_ip, data_deletion_requested_at,
+                pep_status, sanctions_status, wallet_address, avatar_url
+         FROM users WHERE id = $1`,
+        [userId]
+      ),
+      pool.query(
+        `SELECT id, market_id, side, amount, potential_payout, payout, status, created_at
+         FROM bets WHERE user_id = $1 ORDER BY created_at DESC LIMIT 50`,
+        [userId]
+      ),
+      pool.query(
+        `SELECT id, amount, method, status, created_at
+         FROM deposits WHERE user_id = $1 ORDER BY created_at DESC LIMIT 50`,
+        [userId]
+      ),
+      pool.query(
+        `SELECT id, amount, pix_key_type, status, created_at
+         FROM withdrawals WHERE user_id = $1 ORDER BY created_at DESC LIMIT 50`,
+        [userId]
+      ),
+      pool.query(
+        `SELECT id, action, actor, notes, provider, created_at
+         FROM kyc_reviews WHERE user_id = $1 ORDER BY created_at DESC LIMIT 50`,
+        [userId]
+      ).catch(() => ({ rows: [] })),
+      pool.query(
+        `SELECT id, profile, score, completed_at, expires_at
+         FROM suitability_responses WHERE user_id = $1 ORDER BY completed_at DESC LIMIT 10`,
+        [userId]
+      ).catch(() => ({ rows: [] }))
+    ]);
+
+    if (!userRes.rows.length) {
+      return res.status(404).json({ error: 'Usuário não encontrado' });
+    }
+
+    logger.info('LGPD my-data accessed', { userId, ip: req.ip });
+
+    res.json({
+      ok: true,
+      user: userRes.rows[0],
+      bets: betsRes.rows,
+      deposits: depositsRes.rows,
+      withdrawals: withdrawalsRes.rows,
+      kyc_history: kycRes.rows,
+      suitability_history: suitRes.rows
+    });
+  } catch (err) {
+    logger.error('my-data error', { error: err.message });
+    res.status(500).json({ error: 'Erro ao buscar dados' });
+  }
+});
+
+// POST /auth/request-data-deletion — Direito ao esquecimento (Art. 18 VI LGPD)
+router.post('/request-data-deletion', auth, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const ip = req.ip;
+
+    // Verificar saldo
+    const userRes = await pool.query('SELECT balance FROM users WHERE id = $1', [userId]);
+    if (!userRes.rows.length) return res.status(404).json({ error: 'Usuário não encontrado' });
+    const balance = parseFloat(userRes.rows[0].balance || 0);
+    if (balance > 0) {
+      return res.status(400).json({
+        error: `Você possui saldo de R$${balance.toFixed(2)}. Saque todo o saldo antes de solicitar a exclusão.`
+      });
+    }
+
+    // Verificar se já existe request pendente
+    const existing = await pool.query(
+      `SELECT id FROM data_deletion_requests WHERE user_id = $1 AND status = 'pending'`,
+      [userId]
+    );
+    if (existing.rows.length) {
+      return res.status(400).json({ error: 'Já existe uma solicitação de exclusão pendente para sua conta.' });
+    }
+
+    // Registrar solicitação
+    await pool.query(
+      `INSERT INTO data_deletion_requests (user_id, ip_address) VALUES ($1, $2)`,
+      [userId, ip]
+    );
+
+    // Marcar no usuário
+    await pool.query(
+      `UPDATE users SET data_deletion_requested_at = NOW() WHERE id = $1`,
+      [userId]
+    );
+
+    logger.info('Data deletion requested', { userId, ip });
+
+    res.json({
+      ok: true,
+      message: 'Solicitação registrada. Seus dados serão removidos em até 30 dias conforme Art. 18 da Lei 13.709/2018.'
+    });
+  } catch (err) {
+    logger.error('request-data-deletion error', { error: err.message });
+    res.status(500).json({ error: 'Erro ao registrar solicitação' });
   }
 });
 

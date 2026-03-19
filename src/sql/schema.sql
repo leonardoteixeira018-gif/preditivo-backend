@@ -43,6 +43,10 @@ CREATE TABLE IF NOT EXISTS users (
   -- BLOCO 5: Termo de Ciência de Riscos (CVM 30/2021)
   risk_term_accepted_at    TIMESTAMPTZ,
   risk_term_version        VARCHAR(10),
+  -- BLOCO 7: LGPD (Lei 13.709/2018)
+  lgpd_consent_at          TIMESTAMPTZ,
+  lgpd_consent_ip          VARCHAR(50),
+  data_deletion_requested_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
@@ -294,3 +298,28 @@ CREATE TABLE IF NOT EXISTS risk_term_acceptances (
 
 CREATE INDEX IF NOT EXISTS idx_risk_term_user
   ON risk_term_acceptances(user_id, accepted_at DESC);
+
+-- ---- BLOCO 7: LGPD (Lei 13.709/2018) ----
+
+-- Histórico de consentimentos LGPD por usuário
+CREATE TABLE IF NOT EXISTS lgpd_consents (
+  id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id      UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  consent_type VARCHAR(30) NOT NULL, -- 'registration' | 'updated_policy'
+  policy_version VARCHAR(10) NOT NULL DEFAULT 'v1.0',
+  accepted_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  ip_address   VARCHAR(50),
+  user_agent   TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_lgpd_consents_user ON lgpd_consents(user_id, accepted_at DESC);
+
+-- Solicitações de exclusão de dados (direito ao esquecimento — Art. 18 VI LGPD)
+CREATE TABLE IF NOT EXISTS data_deletion_requests (
+  id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id      UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  requested_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  status       VARCHAR(20) NOT NULL DEFAULT 'pending', -- pending | completed | rejected
+  ip_address   VARCHAR(50),
+  notes        TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_data_deletion_user ON data_deletion_requests(user_id);

@@ -405,6 +405,34 @@ app.listen(PORT, async () => {
   )`).catch(()=>{});
   await pool.query("CREATE INDEX IF NOT EXISTS idx_risk_term_user ON risk_term_acceptances(user_id, accepted_at DESC)").catch(()=>{});
 
+  // BLOCO 7: LGPD (Lei 13.709/2018)
+  await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS lgpd_consent_at TIMESTAMPTZ").catch(()=>{});
+  await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS lgpd_consent_ip VARCHAR(50)").catch(()=>{});
+  await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS data_deletion_requested_at TIMESTAMPTZ").catch(()=>{});
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS lgpd_consents (
+      id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id      UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      consent_type VARCHAR(30) NOT NULL,
+      policy_version VARCHAR(10) NOT NULL DEFAULT 'v1.0',
+      accepted_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      ip_address   VARCHAR(50),
+      user_agent   TEXT
+    )
+  `).catch(()=>{});
+  await pool.query("CREATE INDEX IF NOT EXISTS idx_lgpd_consents_user ON lgpd_consents(user_id, accepted_at DESC)").catch(()=>{});
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS data_deletion_requests (
+      id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id      UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      requested_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      status       VARCHAR(20) NOT NULL DEFAULT 'pending',
+      ip_address   VARCHAR(50),
+      notes        TEXT
+    )
+  `).catch(()=>{});
+  await pool.query("CREATE INDEX IF NOT EXISTS idx_data_deletion_user ON data_deletion_requests(user_id)").catch(()=>{});
+
   // Auto-fechar mercados expirados a cada 5 minutos
   const { closeExpiredMarkets } = require('./routes/markets');
   setInterval(() => closeExpiredMarkets().catch(err =>
