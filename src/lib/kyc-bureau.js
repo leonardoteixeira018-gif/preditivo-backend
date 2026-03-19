@@ -168,7 +168,7 @@ async function serproVerifyCPF({ cpf, fullName, dateOfBirth }) {
 
   // CPF sem formatação (somente dígitos)
   const cpfDigits = String(cpf).replace(/\D/g, '');
-  const url       = `${baseUrl}/consulta-cpf-df/v1/cpf/${cpfDigits}`;
+  const url       = `${baseUrl}/consulta-cpf/v1/cpf/${cpfDigits}`;
 
   logger.info('[KYC-BUREAU:serpro] Consultando CPF na Receita Federal', {
     cpf: cpfDigits.slice(0, 3) + '***',

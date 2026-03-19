@@ -5,13 +5,14 @@
  * O token é cacheado em memória e renovado automaticamente 60s antes de expirar.
  *
  * Variáveis de ambiente:
- *   SERPRO_CLIENT_ID     — Consumer Key do portal developers.serpro.gov.br
+ *   SERPRO_CLIENT_ID     — Consumer Key da Área do Cliente (cliente.serpro.gov.br)
  *   SERPRO_CLIENT_SECRET — Consumer Secret
- *   SERPRO_ENV           — 'trial' (padrão) | 'production'
+ *   SERPRO_ENV           — 'production' (único ambiente disponível na nova gateway)
  *
- * Endpoints:
- *   Trial:      https://sandbox.apigateway.serpro.gov.br
- *   Produção:   https://apigateway.serpro.gov.br
+ * Endpoints (nova gateway — migrada em 2024):
+ *   Token:  https://gateway.apiserpro.serpro.gov.br/tokenServer
+ *   CPF:    https://gateway.apiserpro.serpro.gov.br/consulta-cpf/v1/cpf/{ni}
+ *   PEP:    https://gateway.apiserpro.serpro.gov.br/consulta-pep/v1/pep/{ni}
  */
 
 const logger = require('./logger');
@@ -20,14 +21,11 @@ const logger = require('./logger');
 let _cachedToken = null;
 let _tokenExpiresAt = 0;
 
-const SERPRO_BASE = {
-  trial:      'https://sandbox.apigateway.serpro.gov.br',
-  production: 'https://apigateway.serpro.gov.br',
-};
+// Nova gateway unificada do Serpro (migrada em 2024 — não há mais sandbox separado)
+const SERPRO_GATEWAY = 'https://gateway.apiserpro.serpro.gov.br';
 
 function getBaseUrl() {
-  const env = process.env.SERPRO_ENV || 'trial';
-  return SERPRO_BASE[env] || SERPRO_BASE.trial;
+  return SERPRO_GATEWAY;
 }
 
 /**
@@ -50,9 +48,9 @@ async function getSerproToken() {
   }
 
   const credentials = Buffer.from(`${clientId}:${clientSecret}`).toString('base64');
-  const tokenUrl    = `${getBaseUrl()}/token`;
+  const tokenUrl    = `${getBaseUrl()}/tokenServer`;
 
-  logger.info('[SERPRO-AUTH] Solicitando novo token', { env: process.env.SERPRO_ENV || 'trial' });
+  logger.info('[SERPRO-AUTH] Solicitando novo token', { gateway: SERPRO_GATEWAY });
 
   const res = await fetch(tokenUrl, {
     method: 'POST',
