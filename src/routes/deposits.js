@@ -4,6 +4,8 @@ const router = require('express').Router();
 const pool = require('../lib/db');
 const logger = require('../lib/logger');
 const auth = require('../middleware/auth');
+const requireKyc = require('../middleware/requireKyc');
+const requireSuitability = require('../middleware/requireSuitability');
 const { createCheckoutLink } = require('../lib/infinitepay');
 
 const webhookLimiter = rateLimit({
@@ -243,7 +245,7 @@ router.post('/', auth, async (req, res) => {
   }
 });
 
-router.post('/infinitepay/checkout', auth, async (req, res) => {
+router.post('/infinitepay/checkout', auth, requireKyc, requireSuitability, async (req, res) => {
   const client = await pool.connect();
 
   try {

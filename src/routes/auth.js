@@ -327,7 +327,10 @@ router.post('/2fa/disable', auth, async (req, res) => {
 router.get('/me', auth, async (req, res) => {
   try {
     const result = await pool.query(
-      'SELECT id, username AS name, email, balance, bonus_balance, two_fa_enabled, avatar_url FROM users WHERE id = $1',
+      `SELECT id, username AS name, email, balance, bonus_balance, two_fa_enabled, avatar_url,
+              kyc_status, kyc_submitted_at, kyc_approved_at, kyc_rejected_at, kyc_rejection_reason,
+              suitability_profile, suitability_score, suitability_completed_at, suitability_expires_at
+       FROM users WHERE id = $1`,
       [req.user.id]
     );
     res.json(result.rows[0]);

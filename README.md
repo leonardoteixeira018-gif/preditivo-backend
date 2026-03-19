@@ -1,172 +1,307 @@
-# Bubuya. - Backend
+# Bubuya. — Backend
 
-API REST da plataforma de mercados de previsao Bubuya.
-
-## Stack
-- Node.js + Express
-- PostgreSQL via Supabase
-- JWT para autenticacao
-- Resend para emails transacionais
-- InfinitePay para checkout de deposito
-- Railway para deploy
-
-## Estado atual do produto
-O backend e frontend suportam atualmente:
-- Cadastro com verificação por e-mail e login JWT.
-- Listagem e detalhe de mercados com histórico.
-- **Negociação de contratos (Previsões)** com cotações dinâmicas.
-- Ranking público de usuários e performance.
-- Depósitos manuais e **Checkout automatizado via InfinitePay**.
-- Saques com dupla confirmação (E-mail).
-- Painel Admin para gestão de mercados, usuários, receita e simulação de bots.
-- **Integração Web3**: Conexão com MetaMask para futura expansão.
-- **Interface Profissional**: Rodapé institucional e comunicação de "Mercado de Previsão" (não apostas).
-
-O produto atual é uma plataforma web centralizada onde o preço dos contratos reflete as probabilidades do mundo real.
+> Plataforma brasileira de mercados de previsão. Contratos binários sobre eventos do mundo real, com precificação dinâmica via AMM (Automated Market Maker).
 
 ---
 
-## Setup
+## Stack Tecnológica
 
-### 1. Banco de dados
-1. Crie um projeto no [Supabase](https://supabase.com).
-2. No SQL Editor, rode [`src/sql/schema.sql`](src/sql/schema.sql).
-3. Copie a connection string PostgreSQL para `DATABASE_URL`.
-
-### 2. Variaveis de ambiente
-Copie [`.env.example`](.env.example) para `.env` e preencha os campos necessarios.
-
-Variaveis principais:
-- `DATABASE_URL`
-- `JWT_SECRET`
-- `ADMIN_SECRET`
-- `RESEND_API_KEY`
-- `EMAIL_FROM`
-- `APP_BRAND`
-- `APP_DOMAIN`
-- `APP_URL`
-- `SUPPORT_EMAIL`
-- `INFINITEPAY_HANDLE`
-- `INFINITEPAY_REDIRECT_URL`
-- `INFINITEPAY_WEBHOOK_URL`
-
-### 3. Instalar dependencias
-```bash
-npm install
-```
-
-### 4. Rodar localmente
-```bash
-npm run dev
-```
-
-### 5. Deploy no Railway
-1. Crie um projeto no [Railway](https://railway.app).
-2. Conecte este repositorio.
-3. Configure as variaveis de ambiente.
-4. Valide o health check em `/health`.
+| Camada | Tecnologia |
+|--------|-----------|
+| Runtime | Node.js 20 + Express 4 |
+| Banco de dados | PostgreSQL (Supabase) |
+| Autenticação | JWT + blacklist de tokens |
+| E-mail | Resend (transacional) |
+| Pagamentos | InfinitePay (checkout + webhook) |
+| Deploy | Railway (auto-deploy via GitHub) |
+| Logs | Winston (estruturado + correlation ID) |
+| Cache | SimpleCache in-memory (TTL configurável) |
 
 ---
 
-## Endpoints principais
+## Estado atual do produto (Março 2026)
 
-### Health
-| Metodo | Rota | Descricao |
-|--------|------|-----------|
-| GET | `/health` | Status basico da API |
+A plataforma está **em produção em** [bubuya.com.br](https://www.bubuya.com.br) com as seguintes funcionalidades:
 
-### Auth
-| Metodo | Rota | Descricao |
-|--------|------|-----------|
-| POST | `/auth/register` | Inicia cadastro e envia codigo por email |
-| POST | `/auth/register/verify` | Conclui cadastro com codigo |
-| POST | `/auth/login` | Login |
-| GET | `/auth/me` | Perfil do usuario autenticado |
+### Usuarios & Auth
+- Cadastro com verificação por e-mail + código OTP
+- Login JWT com blacklist de tokens (logout real)
+- Recuperação de senha por e-mail
+- Perfil com histórico de apostas e P&L
+- Auditoria de ações do usuário (`user_audit_logs`)
 
 ### Mercados
-| Metodo | Rota | Descricao |
-|--------|------|-----------|
-| GET | `/markets` | Lista mercados |
-| GET | `/markets/stats` | Estatisticas agregadas da plataforma |
-| GET | `/markets/:id` | Detalhe de um mercado com historico |
-| POST | `/markets` | Cria mercado (admin) |
-| PATCH | `/markets/:id/description` | Atualiza descricao (admin) |
-| POST | `/markets/:id/resolve` | Resolve mercado e paga vencedores (admin) |
+- Listagem com filtro por categoria e paginação
+- Detalhe com gráfico de histórico de probabilidade (Chart.js)
+- Order Book ao vivo (atualização a cada 10s)
+- Timeline de eventos + Regras de resolução
+- Seção de discussão/comentários por mercado
+- Cache de 30-60s por endpoint (stats, detalhe)
 
-### Apostas
-| Metodo | Rota | Descricao |
-|--------|------|-----------|
-| POST | `/bets` | Faz aposta |
-| GET | `/bets/my` | Lista apostas do usuario |
-| GET | `/bets/quote` | Simula aposta |
+### Negociação
+- Compra e venda de contratos SIM/NÃO
+- Precificação via AMM: `prob = q_yes / (q_yes + q_no)`
+- Taxa de 2% por operação
+- Liquidação automática na resolução do mercado
+- Proteção anti-abuso: rate limiting por user_id (10 apostas/min)
 
-### Depositos
-| Metodo | Rota | Descricao |
-|--------|------|-----------|
-| POST | `/deposits` | Solicita deposito manual |
-| POST | `/deposits/infinitepay/checkout` | Cria checkout na InfinitePay |
-| POST | `/deposits/infinitepay/webhook` | Recebe webhook de pagamento |
-| GET | `/deposits/my` | Lista depositos do usuario |
-
-### Saques
-| Metodo | Rota | Descricao |
-|--------|------|-----------|
-| POST | `/withdrawals` | Inicia saque e envia codigo por email |
-| POST | `/withdrawals/verify` | Confirma saque com codigo |
-| GET | `/withdrawals/my` | Lista saques do usuario |
-
-### Ranking
-| Metodo | Rota | Descricao |
-|--------|------|-----------|
-| GET | `/ranking` | Ranking publico |
+### Financeiro
+- Depósito manual (revisão admin)
+- Checkout automatizado via InfinitePay (PIX)
+- Webhook de confirmação automática de pagamento
+- Saque via PIX com dupla confirmação por e-mail
+- Detecção de saque suspeito (cashout < 60min após depósito → `risk_flag`)
 
 ### Admin
-O painel admin cobre operacao de mercados, depositos, saques, receita e bots. As rotas exigem `x-admin-secret`.
+- Dashboard consolidado com CTE (`GET /admin/dashboard`)
+- Gestão de mercados, depósitos, saques, usuários
+- Ajuste manual de saldo
+- Simulador de bots para liquidez
+- Log de auditoria administrativo
+- Cache invalidado automaticamente em mutações críticas
+
+### Segurança & Observabilidade
+- Rate limiting por IP e por user_id
+- Logging estruturado com correlation ID por request
+- Detecção de anomalias: cashout rápido + aposta > 50% do saldo
+- Blacklist de tokens com cache local (5min TTL)
+- CORS configurado explicitamente para domínios de produção
 
 ---
 
-## Fluxos criticos
+## Setup local
 
-### Cadastro
-1. Usuario envia nome, email e senha em `/auth/register`
-2. Backend envia codigo por email
-3. Usuario confirma em `/auth/register/verify`
-4. Conta e criada e o JWT e retornado
+### 1. Banco de dados
+```bash
+# Crie um projeto no Supabase e rode o schema:
+psql $DATABASE_URL < src/sql/schema.sql
+```
 
-### Deposito via InfinitePay
-1. Usuario solicita checkout em `/deposits/infinitepay/checkout`
-2. Frontend redireciona para o link da InfinitePay
-3. InfinitePay notifica o backend via webhook
-4. Deposito e conciliado e o saldo e creditado
+### 2. Variáveis de ambiente
+```bash
+cp .env.example .env
+# Preencha todas as variáveis
+```
 
-### Saque
-1. Usuario solicita saque em `/withdrawals`
-2. Backend envia codigo por email
-3. Usuario confirma em `/withdrawals/verify`
-4. Saque fica registrado para processamento operacional
+Variáveis obrigatórias:
+```
+DATABASE_URL
+JWT_SECRET
+ADMIN_SECRET
+RESEND_API_KEY
+EMAIL_FROM
+APP_URL
+INFINITEPAY_HANDLE
+INFINITEPAY_REDIRECT_URL
+INFINITEPAY_WEBHOOK_URL
+```
 
-### Resolucao de mercado
-1. Admin resolve o mercado
-2. Backend fecha o mercado
-3. Vencedores recebem credito
-4. Emails de resultado sao enviados
+### 3. Instalar e rodar
+```bash
+npm install
+npm run dev     # desenvolvimento (nodemon)
+npm start       # produção
+```
+
+### 4. Validar
+```bash
+curl http://localhost:3000/health
+# → { "ok": true, "db": "ok" }
+```
 
 ---
 
-- [x] Implementar integração de checkout InfinitePay (Frontend + Backend)
-- [x] Adicionar suporte inicial para carteiras Web3 (MetaMask)
-- [x] Reformular comunicação para "Mercado de Previsão" (Remover termos de apostas tradicionais)
-- [x] Criar rodapé institucional (Quem Somos, Como Funciona, Aviso Legal)
-- [ ] Validar resolução de mercado real com distribuição de lucros
-- [ ] Testar depósito real via InfinitePay (Fluxo de Webhook)
-- [ ] Revisar e-mails transacionais com a nova terminologia profissional
-- [ ] Rodar beta fechado com grupo pequeno (5-10 usuários)
-- [ ] Definir rotina de monitoramento operacional e log de pagamentos
+## Endpoints da API
 
-## Roadmap posterior
-Depois do lancamento inicial:
-- antifraude e limites operacionais
-- analytics e metricas de conversao
-- melhorias de UX mobile
-- automacoes operacionais
-- estudo de recursos Web3 se fizer sentido comercial
+### Health
+| Método | Rota | Descrição |
+|--------|------|-----------|
+| GET | `/health` | Status da API e conexão com DB |
+
+### Auth
+| Método | Rota | Descrição |
+|--------|------|-----------|
+| POST | `/auth/register` | Cadastro (envia OTP por e-mail) |
+| POST | `/auth/register/verify` | Confirma OTP e cria conta |
+| POST | `/auth/login` | Login → JWT |
+| POST | `/auth/logout` | Invalida token (blacklist) |
+| GET | `/auth/me` | Perfil do usuário autenticado |
+| POST | `/auth/forgot-password` | Envia link de recuperação |
+| POST | `/auth/reset-password` | Redefine senha com token |
+| GET | `/auth/audit/my-logs` | Histórico de ações do próprio usuário |
+
+### Mercados
+| Método | Rota | Descrição |
+|--------|------|-----------|
+| GET | `/markets` | Lista mercados (paginação opcional) |
+| GET | `/markets/stats` | Estatísticas globais da plataforma |
+| GET | `/markets/:id` | Detalhe + histórico de probabilidade |
+| POST | `/markets` | Cria mercado (admin) |
+| PATCH | `/markets/:id/description` | Atualiza regras (admin) |
+| PATCH | `/markets/:id/image` | Atualiza imagem (admin) |
+| POST | `/markets/:id/resolve` | Resolve mercado + paga vencedores (admin) |
+
+### Apostas
+| Método | Rota | Descrição |
+|--------|------|-----------|
+| POST | `/bets` | Executa compra de contrato |
+| POST | `/bets/sell` | Executa venda de contrato |
+| GET | `/bets/my` | Lista apostas abertas do usuário |
+| GET | `/bets/quote` | Simula aposta sem executar |
+
+### Depósitos
+| Método | Rota | Descrição |
+|--------|------|-----------|
+| POST | `/deposits` | Solicita depósito manual |
+| POST | `/deposits/infinitepay/checkout` | Cria checkout PIX (InfinitePay) |
+| POST | `/deposits/infinitepay/webhook` | Webhook de confirmação (InfinitePay) |
+| GET | `/deposits/my` | Lista depósitos do usuário |
+
+### Saques
+| Método | Rota | Descrição |
+|--------|------|-----------|
+| POST | `/withdrawals` | Solicita saque (envia OTP) |
+| POST | `/withdrawals/verify` | Confirma saque com OTP |
+| GET | `/withdrawals/my` | Lista saques do usuário |
+
+### Ranking & Comentários
+| Método | Rota | Descrição |
+|--------|------|-----------|
+| GET | `/ranking` | Ranking público de usuários |
+| GET | `/comments/:marketId` | Comentários de um mercado |
+| POST | `/comments` | Posta comentário |
+
+### Admin
+| Método | Rota | Descrição |
+|--------|------|-----------|
+| GET | `/admin/dashboard` | Dashboard consolidado (CTE + cache 30s) |
+| GET | `/admin/users` | Lista usuários |
+| POST | `/admin/deposits/:id/confirm` | Confirma depósito manual |
+| POST | `/admin/deposits/:id/reject` | Rejeita depósito |
+| POST | `/admin/withdrawals/:id/pay` | Marca saque como pago |
+| POST | `/admin/withdrawals/:id/cancel` | Cancela saque |
+| POST | `/admin/markets` | Cria mercado |
+| POST | `/admin/markets/:id/resolve` | Resolve mercado |
+| POST | `/admin/balance-adjust` | Ajuste manual de saldo |
+| GET | `/admin-auth/audit-logs` | Log de auditoria admin |
+
+---
+
+## Roadmap
+
+### ✅ FASE 1 — MVP (Concluída)
+- Autenticação completa (registro, login, logout, recuperação de senha)
+- CRUD de mercados + sistema de apostas com AMM
+- Depósitos e saques com PIX
+- Checkout automatizado InfinitePay
+- Painel Admin funcional
+- Deploy em produção (Railway + Supabase)
+
+### ✅ FASE 2 — Segurança & Auditoria (Concluída)
+- Logging estruturado com Winston e correlation ID
+- Auditoria de ações de usuários (`user_audit_logs`)
+- Remoção de mensagens de erro sensíveis das respostas da API
+- Endpoint de histórico de auditoria para usuários e admins
+- Blacklist de tokens com persistência em banco
+
+### ✅ FASE 3 — Performance & Escalabilidade (Concluída)
+- Cache in-memory com TTL (mercados, stats, dashboard)
+- Invalidação de cache em mutações críticas
+- Rate limiting por user_id (não apenas por IP)
+- Otimização de queries com CTEs e Promise.all
+- Cache local de blacklist de tokens (evita query no DB a cada request)
+
+### ✅ FASE 4 — Dashboard Admin & Detecção de Anomalias (Concluída)
+- Dashboard consolidado com CTE em query única
+- Detecção de saque rápido pós-depósito (< 60 min) → `risk_flag`
+- Log de aposta desproporcional ao saldo (> 50%)
+- Migração inline: coluna `risk_flag` em `withdrawals`
+
+### 🔄 FASE 5 — Compliance KYC/AML (Próxima)
+_Necessária para candidatura ao Sandbox Regulatório da CVM_
+- Coleta e validação de CPF (dígito verificador + bureau Serpro/Idwall)
+- Upload de documento de identidade + selfie
+- Status KYC: `pending | approved | rejected`
+- Bloqueio de apostas e saques sem KYC aprovado
+- Triagem PEP (Pessoa Exposta Politicamente) e sanções internacionais
+- Relatório automático ao COAF (transações > R$10.000/mês)
+
+### 📋 FASE 6 — Suitability & Limites Operacionais
+_Exigência regulatória CVM_
+- Questionário de perfil de investidor (5-8 perguntas)
+- Classificação: conservador / moderado / arrojado
+- Limites de exposição por perfil de risco
+- Limites por mercado e volume máximo por usuário/mês
+- Segregação de fundos via parceiro regulado (Celcoin/Asaas/Stark Bank)
+
+### 📋 FASE 7 — Candidatura Sandbox CVM
+- Constituição jurídica formal (CNPJ + compliance officer)
+- Política de privacidade LGPD completa
+- Canal de ouvidoria com SLA de 5 dias úteis
+- Documentação técnica e jurídica para formulário CVM (2.000+ chars/seção)
+- Submissão na próxima rodada de admissão do Sandbox Regulatório
+
+### 🔮 FASE 8 — Pós-Sandbox (Autorização Permanente)
+- Integração com corretoras e distribuidores parceiros
+- API pública para criadores de mercado terceiros
+- Mercados com liquidez institucional
+- Expansão para contratos de mais categorias reguladas
+
+---
+
+## Estratégia Regulatória
+
+### Por que o Sandbox da CVM?
+
+Os contratos da Bubuya (SIM/NÃO com liquidação em R$1,00 baseada em eventos futuros) enquadram-se na definição de **valor mobiliário** conforme o Art. 2º, IX da Lei 6.385/76. Operar sem autorização da CVM representa risco jurídico. O **Sandbox Regulatório (Instrução CVM 626)** é o mecanismo correto para plataformas inovadoras que ainda não têm categoria regulatória própria no Brasil.
+
+### Precedente Internacional
+- 🇺🇸 **Kalshi** — operando sob regulação da CFTC desde 2021
+- 🇺🇸 **Polymarket** — maior mercado preditivo do mundo (~$500M/mês em volume)
+- 🇺🇸 **Manifold** — mercado preditivo sem dinheiro real (educacional)
+
+### Narrativa para a CVM
+> *"Somos uma plataforma de descoberta de preço de eventos futuros, análoga ao que a Kalshi opera nos EUA sob regulação da CFTC. O modelo complementa o mercado de capitais ao oferecer instrumentos de hedge de eventos para o público em geral, sem alavancagem e com perda máxima igual ao valor investido."*
+
+### Vantagens competitivas para a candidatura
+- ✅ Prova de conceito validada com volume real em produção
+- ✅ Infraestrutura de segurança e auditoria já implementada
+- ✅ Modelo de risco limitado (sem alavancagem, perda máxima = investimento)
+- ✅ Sem precedente regulatório no Brasil → candidatura prioritária no sandbox
+
+---
+
+## Estrutura do Projeto
+
+```
+preditivo-backend/
+├── src/
+│   ├── index.js              # Entry point, middlewares, startup migrations
+│   ├── lib/
+│   │   ├── cache.js          # SimpleCache in-memory com TTL
+│   │   ├── logger.js         # Winston com correlation ID
+│   │   └── user-audit.js     # Log de ações de usuários
+│   ├── middleware/
+│   │   └── auth.js           # JWT + blacklist com cache local
+│   ├── routes/
+│   │   ├── auth.js
+│   │   ├── markets.js
+│   │   ├── bets.js
+│   │   ├── deposits.js
+│   │   ├── withdrawals.js
+│   │   ├── ranking.js
+│   │   ├── comments.js
+│   │   ├── admin.js
+│   │   └── admin-auth.js
+│   └── sql/
+│       └── schema.sql
+├── .env.example
+├── package.json
+└── README.md
+```
+
+---
+
+## Licença
+
+Proprietário — todos os direitos reservados. © 2026 Bubuya.

@@ -159,6 +159,8 @@ app.use('/withdrawals', require('./routes/withdrawals'));
 app.use('/referrals', require('./routes/referrals'));
 app.use('/transak', require('./routes/transak'));
 app.use('/notifications', require('./routes/notifications'));
+app.use('/kyc', require('./routes/kyc'));
+app.use('/suitability', require('./routes/suitability'));
 
 app.get('/health', async (req, res) => {
   const checks = {
@@ -292,6 +294,94 @@ app.listen(PORT, async () => {
 
   // FASE 4: coluna risk_flag para detecção de saques suspeitos
   await pool.query('ALTER TABLE withdrawals ADD COLUMN IF NOT EXISTS risk_flag BOOLEAN NOT NULL DEFAULT FALSE').catch(() => {});
+
+  // FASE 5 (BLOCO 1): KYC / AML — colunas na tabela users
+  await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS cpf VARCHAR(11)").catch(() => {});
+  await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS full_name TEXT").catch(() => {});
+  await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS date_of_birth DATE").catch(() => {});
+  await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS kyc_status VARCHAR(20) NOT NULL DEFAULT 'pending'").catch(() => {});
+  await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS kyc_submitted_at TIMESTAMPTZ").catch(() => {});
+  await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS kyc_approved_at TIMESTAMPTZ").catch(() => {});
+  await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS kyc_rejected_at TIMESTAMPTZ").catch(() => {});
+  await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS kyc_rejection_reason TEXT").catch(() => {});
+  await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS kyc_provider_id TEXT").catch(() => {});
+  await pool.query("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_cpf ON users(cpf) WHERE cpf IS NOT NULL").catch(() => {});
+
+  // FASE 5 (BLOCO 1): tabela kyc_reviews — histórico de revisões KYC
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS kyc_reviews (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      action VARCHAR(30) NOT NULL,
+      actor TEXT NOT NULL DEFAULT 'system',
+      notes TEXT,
+      provider VARCHAR(40),
+      provider_id TEXT,
+      provider_response JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `).catch(() => {});
+  await pool.query('CREATE INDEX IF NOT EXISTS idx_kyc_reviews_user_id ON kyc_reviews(user_id, created_at DESC)').catch(() => {});
+
+  // FASE 5 (BLOCO 1): tabela coaf_flags — registros de monitoramento PLD/FT
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS coaf_flags (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      deposit_id UUID REFERENCES deposits(id) ON DELETE SET NULL,
+      month_total DECIMAL(18,2) NOT NULL,
+      threshold DECIMAL(18,2) NOT NULL DEFAULT 10000,
+      status VARCHAR(20) NOT NULL DEFAULT 'pending',
+      resolved_at TIMESTAMPTZ,
+      resolved_by TEXT,
+      resolution_notes TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `).catch(() => {});
+  await pool.query('CREATE INDEX IF NOT EXISTS idx_coaf_flags_user_status ON coaf_flags(user_id, status)').catch(() => {});
+
+  // FASE 5 (BLOCO 2): PEP / Sanções — colunas em users
+  await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS pep_status VARCHAR(20) DEFAULT 'not_checked'").catch(() => {});
+  await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS pep_checked_at TIMESTAMPTZ').catch(() => {});
+  await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS sanctions_status VARCHAR(20) DEFAULT 'not_checked'").catch(() => {});
+  await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS sanctions_checked_at TIMESTAMPTZ').catch(() => {});
+
+  // FASE 5 (BLOCO 2): tabela pep_reviews — histórico de triagens PEP e sanções
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS pep_reviews (
+      id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id        UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      screening_type VARCHAR(20) NOT NULL CHECK (screening_type IN ('pep', 'sanctions')),
+      result         VARCHAR(20) NOT NULL CHECK (result IN ('clear', 'flagged', 'sanctioned')),
+      confidence     DECIMAL(5,4) NOT NULL DEFAULT 0,
+      source         VARCHAR(50) NOT NULL DEFAULT 'stub',
+      details        JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `).catch(() => {});
+  await pool.query('CREATE INDEX IF NOT EXISTS idx_pep_reviews_user_id ON pep_reviews(user_id, created_at DESC)').catch(() => {});
+  await pool.query('CREATE INDEX IF NOT EXISTS idx_pep_reviews_type_result ON pep_reviews(screening_type, result)').catch(() => {});
+
+  // FASE 6 (BLOCO 3): Suitability — colunas em users
+  await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS suitability_profile VARCHAR(20)").catch(() => {});
+  await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS suitability_score INTEGER").catch(() => {});
+  await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS suitability_completed_at TIMESTAMPTZ").catch(() => {});
+  await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS suitability_expires_at TIMESTAMPTZ").catch(() => {});
+
+  // FASE 6 (BLOCO 3): tabela suitability_responses — histórico de respostas do questionário
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS suitability_responses (
+      id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id      UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      answers      JSONB NOT NULL DEFAULT '{}'::jsonb,
+      profile      VARCHAR(20) NOT NULL,
+      score        INTEGER,
+      overridden_by TEXT,
+      expires_at   TIMESTAMPTZ NOT NULL,
+      completed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `).catch(() => {});
+  await pool.query('CREATE INDEX IF NOT EXISTS idx_suitability_user_id ON suitability_responses(user_id, completed_at DESC)').catch(() => {});
 
   // Auto-fechar mercados expirados a cada 5 minutos
   const { closeExpiredMarkets } = require('./routes/markets');

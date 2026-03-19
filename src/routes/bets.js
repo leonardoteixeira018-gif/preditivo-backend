@@ -1,14 +1,17 @@
 const router = require('express').Router();
 const pool = require('../lib/db');
 const auth = require('../middleware/auth');
+const requireKyc = require('../middleware/requireKyc');
+const requireSuitability = require('../middleware/requireSuitability');
 const cache = require('../lib/cache');
 const logger = require('../lib/logger');
 const { logUserAction } = require('../lib/user-audit');
+const { getLimits } = require('../lib/suitability');
 
 const TAXA_CASA = 0.02;
 const CACHE_KEY_RANKING = 'ranking:list';
 
-router.post('/', auth, async (req, res) => {
+router.post('/', auth, requireKyc, requireSuitability, async (req, res) => {
   const client = await pool.connect();
 
   try {
@@ -102,6 +105,84 @@ router.post('/', auth, async (req, res) => {
       await client.query('ROLLBACK');
       return res.status(400).json({ error: 'Saldo insuficiente' });
     }
+
+    // ── Verificação de limites de suitability ───────────────────────────────
+    const suitabilityProfile = user.rows[0].suitability_profile || 'conservador';
+    const limits = getLimits(suitabilityProfile);
+
+    // Limite por aposta individual
+    if (amt > limits.max_bet_single) {
+      logger.warn('Bet validation failed - exceeds suitability single bet limit', {
+        userId: req.user.id,
+        profile: suitabilityProfile,
+        betAmount: amt,
+        limit: limits.max_bet_single,
+        ip: req.ip
+      });
+      await client.query('ROLLBACK');
+      return res.status(400).json({
+        error: `Valor máximo por aposta para seu perfil (${suitabilityProfile}): R$${limits.max_bet_single.toFixed(2)}`,
+        suitability_limit: 'max_bet_single',
+        limit: limits.max_bet_single
+      });
+    }
+
+    // Limite de exposição no mercado atual
+    const marketExposure = await client.query(`
+      SELECT COALESCE(SUM(amount), 0) AS total
+      FROM bets
+      WHERE user_id = $1 AND market_id = $2 AND status != 'sold'
+    `, [req.user.id, market_id]);
+
+    const currentMarketTotal = parseFloat(marketExposure.rows[0].total);
+    if (currentMarketTotal + amt > limits.max_market_total) {
+      const available = Math.max(0, limits.max_market_total - currentMarketTotal);
+      logger.warn('Bet validation failed - exceeds suitability market exposure limit', {
+        userId: req.user.id,
+        profile: suitabilityProfile,
+        betAmount: amt,
+        currentMarketTotal,
+        limit: limits.max_market_total,
+        ip: req.ip
+      });
+      await client.query('ROLLBACK');
+      return res.status(400).json({
+        error: `Limite de exposição neste mercado para seu perfil (${suitabilityProfile}): R$${limits.max_market_total.toFixed(2)}. Disponível: R$${available.toFixed(2)}`,
+        suitability_limit: 'max_market_total',
+        limit: limits.max_market_total,
+        available
+      });
+    }
+
+    // Limite mensal total
+    const monthlyTotal = await client.query(`
+      SELECT COALESCE(SUM(amount), 0) AS total
+      FROM bets
+      WHERE user_id = $1
+        AND status != 'sold'
+        AND created_at >= date_trunc('month', NOW())
+    `, [req.user.id]);
+
+    const currentMonthTotal = parseFloat(monthlyTotal.rows[0].total);
+    if (currentMonthTotal + amt > limits.max_month_total) {
+      const available = Math.max(0, limits.max_month_total - currentMonthTotal);
+      logger.warn('Bet validation failed - exceeds suitability monthly limit', {
+        userId: req.user.id,
+        profile: suitabilityProfile,
+        betAmount: amt,
+        currentMonthTotal,
+        limit: limits.max_month_total,
+        ip: req.ip
+      });
+      await client.query('ROLLBACK');
+      return res.status(400).json({
+        error: `Limite mensal de apostas para seu perfil (${suitabilityProfile}): R$${limits.max_month_total.toFixed(2)}. Disponível este mês: R$${available.toFixed(2)}`,
+        suitability_limit: 'max_month_total',
+        limit: limits.max_month_total,
+        available
+      });
+    }
+    // ── Fim verificação de limites ──────────────────────────────────────────
 
     // Anomaly detection: aposta desproporcional ao saldo (não bloqueia)
     const balanceRatio = amt / parseFloat(user.rows[0].balance);
@@ -259,7 +340,7 @@ router.get('/my/market/:market_id', auth, async (req, res) => {
 });
 
 // POST /bets/sell — vende uma posição aberta
-router.post('/sell', auth, async (req, res) => {
+router.post('/sell', auth, requireKyc, requireSuitability, async (req, res) => {
   const client = await pool.connect();
   try {
     const { market_id, side, amount } = req.body;

@@ -53,15 +53,44 @@ router.get('/dashboard', async (req, res) => {
             COUNT(*) FILTER (WHERE status = 'closed')       AS closed,
             COUNT(*) FILTER (WHERE resolved_at IS NOT NULL) AS resolved
           FROM markets
+        ),
+        kyc_summary AS (
+          SELECT
+            COUNT(*) FILTER (WHERE kyc_status = 'submitted') AS pending_review,
+            COUNT(*) FILTER (WHERE kyc_status = 'approved')  AS approved,
+            COUNT(*) FILTER (WHERE kyc_status = 'rejected')  AS rejected
+          FROM users WHERE COALESCE(is_bot, FALSE) = FALSE
+        ),
+        coaf_summary AS (
+          SELECT COUNT(*) AS pending_flags
+          FROM coaf_flags WHERE status = 'pending'
+        ),
+        pep_summary AS (
+          SELECT COUNT(*) AS pep_flagged
+          FROM users
+          WHERE pep_status = 'flagged'
+            AND COALESCE(is_bot, FALSE) = FALSE
+        ),
+        suitability_summary AS (
+          SELECT
+            COUNT(*) FILTER (WHERE suitability_profile IS NULL)                                        AS sem_perfil,
+            COUNT(*) FILTER (WHERE suitability_profile IS NOT NULL AND suitability_expires_at < NOW()) AS expirados,
+            COUNT(*) FILTER (WHERE suitability_profile IS NOT NULL AND suitability_expires_at > NOW()) AS ativos
+          FROM users
+          WHERE COALESCE(is_bot, FALSE) = FALSE
         )
       SELECT
-        row_to_json(withdrawals_pending) AS withdrawals_pending,
-        row_to_json(deposits_pending)    AS deposits_pending,
-        row_to_json(users_new)           AS users_new,
-        row_to_json(bets_volume)         AS bets_volume,
-        row_to_json(revenue)             AS revenue,
-        row_to_json(markets_summary)     AS markets
-      FROM withdrawals_pending, deposits_pending, users_new, bets_volume, revenue, markets_summary
+        row_to_json(withdrawals_pending)   AS withdrawals_pending,
+        row_to_json(deposits_pending)      AS deposits_pending,
+        row_to_json(users_new)             AS users_new,
+        row_to_json(bets_volume)           AS bets_volume,
+        row_to_json(revenue)               AS revenue,
+        row_to_json(markets_summary)       AS markets,
+        row_to_json(kyc_summary)           AS kyc,
+        row_to_json(coaf_summary)          AS coaf,
+        row_to_json(pep_summary)           AS pep,
+        row_to_json(suitability_summary)   AS suitability
+      FROM withdrawals_pending, deposits_pending, users_new, bets_volume, revenue, markets_summary, kyc_summary, coaf_summary, pep_summary, suitability_summary
     `);
 
     const dashboard = result.rows[0];

@@ -17,7 +17,29 @@ CREATE TABLE IF NOT EXISTS users (
   rank_profit DECIMAL(18,2),
   rank_win_rate DECIMAL(5,2),
   email_verified_at TIMESTAMPTZ,
+  two_fa_enabled BOOLEAN NOT NULL DEFAULT FALSE,
   wallet_address VARCHAR(42),
+  avatar_url TEXT,
+  -- FASE 5 (BLOCO 1): KYC / AML
+  cpf VARCHAR(11) UNIQUE,
+  full_name TEXT,
+  date_of_birth DATE,
+  kyc_status VARCHAR(20) NOT NULL DEFAULT 'pending',
+  kyc_submitted_at TIMESTAMPTZ,
+  kyc_approved_at TIMESTAMPTZ,
+  kyc_rejected_at TIMESTAMPTZ,
+  kyc_rejection_reason TEXT,
+  kyc_provider_id TEXT,
+  -- FASE 5 (BLOCO 2): PEP / Sanções
+  pep_status           VARCHAR(20) DEFAULT 'not_checked',
+  pep_checked_at       TIMESTAMPTZ,
+  sanctions_status     VARCHAR(20) DEFAULT 'not_checked',
+  sanctions_checked_at TIMESTAMPTZ,
+  -- BLOCO 3: Suitability / Perfil de Investidor (CVM Sandbox)
+  suitability_profile      VARCHAR(20),             -- conservador | moderado | arrojado
+  suitability_score        INTEGER,
+  suitability_completed_at TIMESTAMPTZ,
+  suitability_expires_at   TIMESTAMPTZ,             -- expira em 12 meses
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
@@ -80,6 +102,7 @@ CREATE TABLE IF NOT EXISTS withdrawals (
   pix_key TEXT NOT NULL,
   pix_key_type VARCHAR(30) NOT NULL,
   status VARCHAR(20) NOT NULL DEFAULT 'pending',
+  risk_flag BOOLEAN NOT NULL DEFAULT FALSE,  -- FASE 4: detecção de saque rápido após depósito
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
@@ -181,3 +204,75 @@ CREATE TABLE IF NOT EXISTS user_audit_logs (
 CREATE INDEX IF NOT EXISTS idx_user_audit_user_id ON user_audit_logs(user_id, timestamp DESC);
 CREATE INDEX IF NOT EXISTS idx_user_audit_action ON user_audit_logs(action, timestamp DESC);
 CREATE INDEX IF NOT EXISTS idx_user_audit_timestamp ON user_audit_logs(timestamp DESC);
+
+-- ---- FASE 5 (BLOCO 1): KYC / AML ----
+
+-- Histórico de revisões KYC por usuário
+CREATE TABLE IF NOT EXISTS kyc_reviews (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  action VARCHAR(30) NOT NULL,        -- submitted | approved | rejected | document_submitted
+  actor TEXT NOT NULL DEFAULT 'system', -- 'system' | 'admin:<id>' | 'bureau:<provider>'
+  notes TEXT,
+  provider VARCHAR(40),               -- stub | idwall | serpro
+  provider_id TEXT,
+  provider_response JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_kyc_reviews_user_id ON kyc_reviews(user_id, created_at DESC);
+
+-- Flags de monitoramento PLD/FT (COAF)
+-- Criados quando o usuário ultrapassa R$10.000 em depósitos no mês
+CREATE TABLE IF NOT EXISTS coaf_flags (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  deposit_id UUID REFERENCES deposits(id) ON DELETE SET NULL,
+  month_total DECIMAL(18,2) NOT NULL,
+  threshold DECIMAL(18,2) NOT NULL DEFAULT 10000,
+  status VARCHAR(20) NOT NULL DEFAULT 'pending',   -- pending | dismissed | reported
+  resolved_at TIMESTAMPTZ,
+  resolved_by TEXT,
+  resolution_notes TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_coaf_flags_user_status ON coaf_flags(user_id, status);
+CREATE INDEX IF NOT EXISTS idx_coaf_flags_status ON coaf_flags(status, created_at DESC);
+
+-- ---- FASE 5 (BLOCO 2): PEP / Sanções Internacionais ----
+
+-- Histórico de triagens PEP (Pessoa Exposta Politicamente) e sanções internacionais
+-- BACEN Circular 3.978/2020 — FATF Recommendations — OFAC SDN / ONU / UE
+CREATE TABLE IF NOT EXISTS pep_reviews (
+  id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id        UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  screening_type VARCHAR(20) NOT NULL CHECK (screening_type IN ('pep', 'sanctions')),
+  result         VARCHAR(20) NOT NULL CHECK (result IN ('clear', 'flagged', 'sanctioned')),
+  confidence     DECIMAL(5,4) NOT NULL DEFAULT 0,  -- 0.0000 a 1.0000
+  source         VARCHAR(50) NOT NULL DEFAULT 'stub', -- stub | serpro | idwall
+  details        JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_pep_reviews_user_id
+  ON pep_reviews(user_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_pep_reviews_type_result
+  ON pep_reviews(screening_type, result);
+
+-- ---- BLOCO 3: Suitability / Perfil de Investidor ----
+
+-- Histórico de respostas ao questionário de suitability
+-- O perfil válido é sempre o mais recente com expires_at > NOW()
+CREATE TABLE IF NOT EXISTS suitability_responses (
+  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id       UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  answers       JSONB NOT NULL DEFAULT '{}'::jsonb,
+  profile       VARCHAR(20) NOT NULL,  -- conservador | moderado | arrojado
+  score         INTEGER,               -- NULL quando sobrescrito por admin
+  overridden_by TEXT,                  -- 'admin' quando sobrescrito manualmente
+  expires_at    TIMESTAMPTZ NOT NULL,
+  completed_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_suitability_user_id
+  ON suitability_responses(user_id, completed_at DESC);
