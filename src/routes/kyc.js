@@ -632,6 +632,38 @@ router.get('/didit/session/:sessionId', auth, async (req, res) => {
 // ── ADMIN ROUTES ─────────────────────────────────────────────────────────────
 
 /**
+ * GET /kyc/admin/approved
+ * Lista usuários com KYC aprovado, ordenados por data de aprovação.
+ */
+router.get('/admin/approved', adminAuth, async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT
+        u.id,
+        u.username,
+        u.email,
+        u.full_name,
+        u.cpf,
+        u.date_of_birth,
+        u.kyc_status,
+        u.kyc_approved_at,
+        u.kyc_provider_id,
+        u.pep_status,
+        u.sanctions_status
+      FROM users u
+      WHERE u.kyc_status = 'approved'
+        AND COALESCE(u.is_bot, FALSE) = FALSE
+      ORDER BY u.kyc_approved_at DESC
+      LIMIT 200
+    `);
+    res.json({ ok: true, count: result.rows.length, users: result.rows });
+  } catch (err) {
+    logger.error('KYC admin approved list error', { error: err.message });
+    res.status(500).json({ error: 'Erro interno do servidor' });
+  }
+});
+
+/**
  * GET /kyc/admin/pending
  * Lista usuários com KYC em análise (submitted).
  */
