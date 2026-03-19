@@ -21,16 +21,7 @@ const { logUserAction } = require('../lib/user-audit');
 const { validateCPF, maskCPF, KYC_STATUS } = require('../lib/kyc');
 const { verifyCPF, verifyDocument } = require('../lib/kyc-bureau');
 const { runFullScreening } = require('../lib/pep-screening');
-
-const ADMIN_SECRET = process.env.ADMIN_SECRET;
-
-function adminAuth(req, res, next) {
-  const secret = req.headers['x-admin-secret'];
-  if (!secret || secret !== ADMIN_SECRET) {
-    return res.status(403).json({ error: 'Acesso negado' });
-  }
-  next();
-}
+const adminAuth = require('../middleware/adminAuth'); // suporta JWT Bearer e x-admin-secret
 
 // ── USER ROUTES ──────────────────────────────────────────────────────────────
 
@@ -365,10 +356,14 @@ router.get('/admin/pending', adminAuth, async (req, res) => {
         u.username,
         u.email,
         u.full_name,
+        u.cpf,
         u.date_of_birth,
         u.kyc_status,
         u.kyc_submitted_at,
         u.kyc_provider_id,
+        u.pep_status,
+        u.pep_checked_at,
+        u.sanctions_status,
         u.created_at,
         (SELECT COUNT(*) FROM kyc_reviews kr WHERE kr.user_id = u.id) AS review_count
       FROM users u

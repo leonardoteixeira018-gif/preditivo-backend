@@ -22,16 +22,7 @@ const {
   calculateProfile,
   calcExpiresAt,
 } = require('../lib/suitability');
-
-const ADMIN_SECRET = process.env.ADMIN_SECRET;
-
-function adminAuth(req, res, next) {
-  const secret = req.headers['x-admin-secret'];
-  if (!secret || secret !== ADMIN_SECRET) {
-    return res.status(403).json({ error: 'Acesso negado' });
-  }
-  next();
-}
+const adminAuth = require('../middleware/adminAuth'); // suporta JWT Bearer e x-admin-secret
 
 // ── Rotas de usuário ──────────────────────────────────────────────────────────
 
@@ -183,18 +174,36 @@ router.post('/submit', auth, async (req, res) => {
  */
 router.get('/admin/stats', adminAuth, async (req, res) => {
   try {
-    const result = await pool.query(`
-      SELECT
-        COUNT(*) FILTER (WHERE suitability_profile IS NULL)                                       AS sem_perfil,
-        COUNT(*) FILTER (WHERE suitability_profile IS NOT NULL AND suitability_expires_at < NOW()) AS expirados,
-        COUNT(*) FILTER (WHERE suitability_profile = 'conservador' AND suitability_expires_at > NOW()) AS conservador,
-        COUNT(*) FILTER (WHERE suitability_profile = 'moderado'    AND suitability_expires_at > NOW()) AS moderado,
-        COUNT(*) FILTER (WHERE suitability_profile = 'arrojado'    AND suitability_expires_at > NOW()) AS arrojado
-      FROM users
-      WHERE COALESCE(is_bot, FALSE) = FALSE
-    `);
+    const [aggResult, usersResult] = await Promise.all([
+      pool.query(`
+        SELECT
+          COUNT(*) FILTER (WHERE suitability_profile IS NULL)                                        AS sem_perfil,
+          COUNT(*) FILTER (WHERE suitability_profile IS NOT NULL AND suitability_expires_at < NOW()) AS expirados,
+          COUNT(*) FILTER (WHERE suitability_profile = 'conservador' AND suitability_expires_at > NOW()) AS conservador,
+          COUNT(*) FILTER (WHERE suitability_profile = 'moderado'    AND suitability_expires_at > NOW()) AS moderado,
+          COUNT(*) FILTER (WHERE suitability_profile = 'arrojado'    AND suitability_expires_at > NOW()) AS arrojado,
+          COUNT(*) FILTER (WHERE suitability_profile IS NOT NULL AND suitability_expires_at > NOW()) AS total_responded,
+          ROUND(AVG(suitability_score) FILTER (WHERE suitability_profile IS NOT NULL), 1)           AS avg_score
+        FROM users
+        WHERE COALESCE(is_bot, FALSE) = FALSE
+      `),
+      pool.query(`
+        SELECT id, username, email, suitability_profile, suitability_score,
+               suitability_completed_at, suitability_expires_at
+        FROM users
+        WHERE suitability_profile IS NOT NULL
+          AND COALESCE(is_bot, FALSE) = FALSE
+        ORDER BY suitability_completed_at DESC
+        LIMIT 100
+      `)
+    ]);
 
-    res.json({ ok: true, stats: result.rows[0] });
+    const stats = {
+      ...aggResult.rows[0],
+      recent_users: usersResult.rows
+    };
+
+    res.json({ ok: true, stats });
   } catch (err) {
     logger.error('Suitability admin stats error', { error: err.message });
     res.status(500).json({ error: 'Erro interno do servidor' });
