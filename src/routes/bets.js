@@ -3,6 +3,7 @@ const pool = require('../lib/db');
 const auth = require('../middleware/auth');
 const requireKyc = require('../middleware/requireKyc');
 const requireSuitability = require('../middleware/requireSuitability');
+const requireRiskTerm = require('../middleware/requireRiskTerm');
 const cache = require('../lib/cache');
 const logger = require('../lib/logger');
 const { logUserAction } = require('../lib/user-audit');
@@ -11,7 +12,7 @@ const { getLimits } = require('../lib/suitability');
 const TAXA_CASA = 0.02;
 const CACHE_KEY_RANKING = 'ranking:list';
 
-router.post('/', auth, requireKyc, requireSuitability, async (req, res) => {
+router.post('/', auth, requireRiskTerm, requireKyc, requireSuitability, async (req, res) => {
   const client = await pool.connect();
 
   try {
@@ -107,7 +108,18 @@ router.post('/', auth, requireKyc, requireSuitability, async (req, res) => {
     }
 
     // ── Verificação de limites de suitability ───────────────────────────────
-    const suitabilityProfile = user.rows[0].suitability_profile || 'conservador';
+    const suitabilityProfile = user.rows[0].suitability_profile;
+    if (!suitabilityProfile) {
+      logger.warn('Bet blocked: suitability profile missing inside transaction', {
+        userId: req.user.id,
+        ip: req.ip
+      });
+      await client.query('ROLLBACK');
+      return res.status(403).json({
+        error: 'SUITABILITY_REQUIRED',
+        message: 'Perfil de investidor não encontrado. Complete o questionário de suitability antes de operar.'
+      });
+    }
     const limits = getLimits(suitabilityProfile);
 
     // Limite por aposta individual
@@ -340,7 +352,7 @@ router.get('/my/market/:market_id', auth, async (req, res) => {
 });
 
 // POST /bets/sell — vende uma posição aberta
-router.post('/sell', auth, requireKyc, requireSuitability, async (req, res) => {
+router.post('/sell', auth, requireRiskTerm, requireKyc, requireSuitability, async (req, res) => {
   const client = await pool.connect();
   try {
     const { market_id, side, amount } = req.body;

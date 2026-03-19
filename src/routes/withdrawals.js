@@ -3,6 +3,7 @@ const pool = require('../lib/db');
 const auth = require('../middleware/auth');
 const requireKyc = require('../middleware/requireKyc');
 const requireSuitability = require('../middleware/requireSuitability');
+const requireRiskTerm = require('../middleware/requireRiskTerm');
 const { createEmailVerification, consumeEmailVerification } = require('../lib/emailVerification');
 const { APP_BRAND } = require('../lib/appConfig');
 const logger = require('../lib/logger');
@@ -44,7 +45,7 @@ function validateWithdrawalRequest({ amount, pixKey, pixKeyType, withdrawable, l
   return null;
 }
 
-router.post('/', auth, requireKyc, requireSuitability, async (req, res) => {
+router.post('/', auth, requireRiskTerm, requireKyc, requireSuitability, async (req, res) => {
   try {
     const amount = parseFloat(req.body.amount);
     const pixKey = String(req.body.pix_key || '').trim();
@@ -115,7 +116,7 @@ router.post('/', auth, requireKyc, requireSuitability, async (req, res) => {
   }
 });
 
-router.post('/verify', auth, requireKyc, requireSuitability, async (req, res) => {
+router.post('/verify', auth, requireRiskTerm, requireKyc, requireSuitability, async (req, res) => {
   const client = await pool.connect();
 
   try {

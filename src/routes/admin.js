@@ -1725,6 +1725,7 @@ router.delete('/users/:userId', async (req, res) => {
       'user_audit_logs',
       'audit_logs',
       'bonus_transactions',
+      'risk_term_acceptances',
     ];
     for (const table of optionalTables) {
       await client.query(`DELETE FROM ${table} WHERE user_id = $1`, [userId]).catch(() => {});

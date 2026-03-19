@@ -481,4 +481,62 @@ router.post('/reset-password', async (req, res) => {
   }
 });
 
+// ── BLOCO 5: Termo de Ciência de Riscos ──────────────────────────────────────
+
+const CURRENT_TERM_VERSION = 'v1.0';
+
+// GET /auth/risk-term-status — retorna status de aceite do termo de riscos
+router.get('/risk-term-status', auth, async (req, res) => {
+  try {
+    const result = await pool.query(
+      'SELECT risk_term_accepted_at, risk_term_version FROM users WHERE id = $1',
+      [req.user.id]
+    );
+    const row = result.rows[0];
+    const accepted = !!(row?.risk_term_accepted_at && row?.risk_term_version === CURRENT_TERM_VERSION);
+    res.json({
+      accepted,
+      accepted_at: row?.risk_term_accepted_at || null,
+      term_version: row?.risk_term_version || null,
+      current_version: CURRENT_TERM_VERSION,
+    });
+  } catch (err) {
+    logger.error('risk-term-status error', { error: err.message });
+    res.status(500).json({ error: 'Erro interno' });
+  }
+});
+
+// POST /auth/accept-risk-term — registra aceite do termo de riscos
+router.post('/accept-risk-term', auth, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const ip = req.ip;
+    const userAgent = req.headers['user-agent'] || null;
+
+    // Registra na tabela de histórico
+    await pool.query(
+      `INSERT INTO risk_term_acceptances (user_id, term_version, ip_address, user_agent)
+       VALUES ($1, $2, $3, $4)`,
+      [userId, CURRENT_TERM_VERSION, ip, userAgent]
+    );
+
+    // Atualiza users
+    await pool.query(
+      `UPDATE users SET risk_term_accepted_at = NOW(), risk_term_version = $1 WHERE id = $2`,
+      [CURRENT_TERM_VERSION, userId]
+    );
+
+    logger.info('Termo de riscos aceito', { userId, termVersion: CURRENT_TERM_VERSION, ip });
+
+    res.json({
+      ok: true,
+      accepted_at: new Date().toISOString(),
+      term_version: CURRENT_TERM_VERSION,
+    });
+  } catch (err) {
+    logger.error('accept-risk-term error', { error: err.message });
+    res.status(500).json({ error: 'Erro interno' });
+  }
+});
+
 module.exports = router;

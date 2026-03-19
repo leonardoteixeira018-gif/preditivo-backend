@@ -24,11 +24,27 @@ module.exports = async function requireSuitability(req, res, next) {
     }
 
     const result = await pool.query(
-      'SELECT suitability_profile, suitability_expires_at FROM users WHERE id = $1',
+      'SELECT suitability_profile, suitability_expires_at, kyc_status FROM users WHERE id = $1',
       [userId]
     );
 
     const row = result.rows[0];
+
+    // Defense in depth: bloquear também se KYC não aprovado
+    if (row?.kyc_status !== 'approved') {
+      logger.warn('Operação bloqueada por requireSuitability: KYC não aprovado', {
+        userId,
+        kycStatus: row?.kyc_status || null,
+        path: req.path,
+        method: req.method,
+        ip: req.ip
+      });
+      return res.status(403).json({
+        error: 'KYC_REQUIRED',
+        message: 'Verificação de identidade necessária para operar.'
+      });
+    }
+
     const profile   = row?.suitability_profile;
     const expiresAt = row?.suitability_expires_at ? new Date(row.suitability_expires_at) : null;
     const now       = new Date();

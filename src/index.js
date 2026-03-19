@@ -392,6 +392,19 @@ app.listen(PORT, async () => {
   await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS last_reviewed_at TIMESTAMPTZ").catch(() => {});
   await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS reviewed_by VARCHAR(100)").catch(() => {});
 
+  // BLOCO 5: Termo de Ciência de Riscos
+  await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS risk_term_accepted_at TIMESTAMPTZ").catch(()=>{});
+  await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS risk_term_version VARCHAR(10)").catch(()=>{});
+  await pool.query(`CREATE TABLE IF NOT EXISTS risk_term_acceptances (
+    id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id      UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    term_version VARCHAR(10) NOT NULL DEFAULT 'v1.0',
+    accepted_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    ip_address   VARCHAR(50),
+    user_agent   TEXT
+  )`).catch(()=>{});
+  await pool.query("CREATE INDEX IF NOT EXISTS idx_risk_term_user ON risk_term_acceptances(user_id, accepted_at DESC)").catch(()=>{});
+
   // Auto-fechar mercados expirados a cada 5 minutos
   const { closeExpiredMarkets } = require('./routes/markets');
   setInterval(() => closeExpiredMarkets().catch(err =>

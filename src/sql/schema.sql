@@ -40,6 +40,9 @@ CREATE TABLE IF NOT EXISTS users (
   suitability_score        INTEGER,
   suitability_completed_at TIMESTAMPTZ,
   suitability_expires_at   TIMESTAMPTZ,             -- expira em 12 meses
+  -- BLOCO 5: Termo de Ciência de Riscos (CVM 30/2021)
+  risk_term_accepted_at    TIMESTAMPTZ,
+  risk_term_version        VARCHAR(10),
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
@@ -276,3 +279,18 @@ CREATE TABLE IF NOT EXISTS suitability_responses (
 
 CREATE INDEX IF NOT EXISTS idx_suitability_user_id
   ON suitability_responses(user_id, completed_at DESC);
+
+-- ---- BLOCO 5: Termo de Ciência de Riscos (CVM 30/2021) ----
+
+-- Histórico de aceites do Termo de Ciência de Riscos
+CREATE TABLE IF NOT EXISTS risk_term_acceptances (
+  id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id      UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  term_version VARCHAR(10) NOT NULL DEFAULT 'v1.0',
+  accepted_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  ip_address   VARCHAR(50),
+  user_agent   TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_risk_term_user
+  ON risk_term_acceptances(user_id, accepted_at DESC);
