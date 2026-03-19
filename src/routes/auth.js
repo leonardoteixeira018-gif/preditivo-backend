@@ -6,7 +6,9 @@ const logger = require('../lib/logger');
 const auth = require('../middleware/auth');
 const { createEmailVerification, consumeEmailVerification } = require('../lib/emailVerification');
 const { APP_BRAND } = require('../lib/appConfig');
-const { getUserAuditLogs } = require('../lib/user-audit');
+const { getUserAuditLogs, logUserAction } = require('../lib/user-audit');
+const speakeasy = require('speakeasy');
+const QRCode    = require('qrcode');
 
 async function send2faCode(user) {
   return createEmailVerification({
@@ -222,13 +224,17 @@ router.post('/login', async (req, res) => {
     }
 
     if (user.two_fa_enabled) {
-      logger.info('2FA code sent', {
+      logger.info('2FA TOTP required', {
         email: normalizedEmail,
         userId: user.id,
         ip: req.ip
       });
-      await send2faCode(user);
-      return res.json({ requires_2fa: true, email: user.email });
+      const tempToken = jwt.sign(
+        { userId: user.id, two_fa_pending: true },
+        process.env.JWT_SECRET,
+        { expiresIn: '5m' }
+      );
+      return res.json({ ok: true, requires_2fa: true, temp_token: tempToken });
     }
 
     const token = jwt.sign({ id: user.id }, process.env.JWT_SECRET, { expiresIn: '7d' });
@@ -674,6 +680,178 @@ router.post('/request-data-deletion', auth, async (req, res) => {
   } catch (err) {
     logger.error('request-data-deletion error', { error: err.message });
     res.status(500).json({ error: 'Erro ao registrar solicitação' });
+  }
+});
+
+// ── BLOCO 8: 2FA TOTP (Google Authenticator / Authy) ─────────────────────────
+
+// POST /auth/2fa/setup — Gera secret TOTP e QR code (sem ativar ainda)
+router.post('/2fa/setup', auth, async (req, res) => {
+  try {
+    const userResult = await pool.query('SELECT * FROM users WHERE id = $1', [req.user.id]);
+    const user = userResult.rows[0];
+
+    if (user.two_fa_enabled) {
+      return res.status(400).json({ error: '2FA já está ativo nesta conta.' });
+    }
+
+    const secret = speakeasy.generateSecret({
+      name: 'Bubuya (' + user.email + ')',
+      issuer: 'Bubuya'
+    });
+
+    await pool.query(
+      'UPDATE users SET two_fa_secret = $1 WHERE id = $2',
+      [secret.base32, user.id]
+    );
+
+    const qr_code = await QRCode.toDataURL(secret.otpauth_url);
+
+    res.json({
+      qr_code,
+      secret: secret.base32,
+      message: 'Escaneie o QR code no Google Authenticator ou Authy'
+    });
+  } catch (err) {
+    logger.error('2fa/setup error', { error: err.message });
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /auth/2fa/verify-setup — Confirma código TOTP e ativa 2FA
+router.post('/2fa/verify-setup', auth, async (req, res) => {
+  try {
+    const code = String(req.body.code || '').trim();
+    if (!code) return res.status(400).json({ error: 'Código obrigatório' });
+
+    const userResult = await pool.query('SELECT * FROM users WHERE id = $1', [req.user.id]);
+    const user = userResult.rows[0];
+
+    if (!user.two_fa_secret) {
+      return res.status(400).json({ error: 'Inicie o setup primeiro em /auth/2fa/setup' });
+    }
+
+    const verified = speakeasy.totp.verify({
+      secret: user.two_fa_secret,
+      encoding: 'base32',
+      token: code,
+      window: 1
+    });
+
+    if (!verified) {
+      return res.status(400).json({ error: 'Código inválido. Verifique o app e tente novamente.' });
+    }
+
+    await pool.query(
+      'UPDATE users SET two_fa_enabled = TRUE, two_fa_enabled_at = NOW() WHERE id = $1',
+      [user.id]
+    );
+
+    logUserAction({ userId: user.id, action: '2fa_enabled', resourceType: 'user', resourceId: user.id, ipAddress: req.ip });
+
+    res.json({ ok: true, message: 'Autenticação de dois fatores ativada com sucesso!' });
+  } catch (err) {
+    logger.error('2fa/verify-setup error', { error: err.message });
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /auth/2fa/disable — Desativar 2FA (requer código TOTP atual)
+router.post('/2fa/disable', auth, async (req, res) => {
+  try {
+    const code = String(req.body.code || '').trim();
+    if (!code) return res.status(400).json({ error: 'Código obrigatório' });
+
+    const userResult = await pool.query('SELECT * FROM users WHERE id = $1', [req.user.id]);
+    const user = userResult.rows[0];
+
+    if (!user.two_fa_enabled || !user.two_fa_secret) {
+      return res.status(400).json({ error: '2FA não está ativo nesta conta.' });
+    }
+
+    const verified = speakeasy.totp.verify({
+      secret: user.two_fa_secret,
+      encoding: 'base32',
+      token: code,
+      window: 1
+    });
+
+    if (!verified) {
+      return res.status(401).json({ error: 'Código inválido. Verifique o app e tente novamente.' });
+    }
+
+    await pool.query(
+      'UPDATE users SET two_fa_enabled = FALSE, two_fa_secret = NULL, two_fa_enabled_at = NULL WHERE id = $1',
+      [user.id]
+    );
+
+    logUserAction({ userId: user.id, action: '2fa_disabled', resourceType: 'user', resourceId: user.id, ipAddress: req.ip });
+
+    res.json({ ok: true, message: '2FA desativado.' });
+  } catch (err) {
+    logger.error('2fa/disable error', { error: err.message });
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /auth/2fa/validate — Valida código TOTP durante login (usa temp_token)
+router.post('/2fa/validate', async (req, res) => {
+  try {
+    const { temp_token, code } = req.body;
+    if (!temp_token || !code) {
+      return res.status(400).json({ error: 'temp_token e code são obrigatórios' });
+    }
+
+    let payload;
+    try {
+      payload = jwt.verify(temp_token, process.env.JWT_SECRET);
+    } catch (e) {
+      return res.status(401).json({ error: 'Token inválido ou expirado' });
+    }
+
+    if (!payload.two_fa_pending || !payload.userId) {
+      return res.status(401).json({ error: 'Token inválido' });
+    }
+
+    const userResult = await pool.query('SELECT * FROM users WHERE id = $1', [payload.userId]);
+    if (!userResult.rows.length) {
+      return res.status(401).json({ error: 'Usuário não encontrado' });
+    }
+    const user = userResult.rows[0];
+
+    if (!user.two_fa_enabled || !user.two_fa_secret) {
+      return res.status(401).json({ error: '2FA não está ativo nesta conta.' });
+    }
+
+    const verified = speakeasy.totp.verify({
+      secret: user.two_fa_secret,
+      encoding: 'base32',
+      token: String(code).trim(),
+      window: 1
+    });
+
+    if (!verified) {
+      return res.status(401).json({ error: 'Código inválido ou expirado' });
+    }
+
+    const token = jwt.sign({ id: user.id }, process.env.JWT_SECRET, { expiresIn: '7d' });
+
+    logger.info('2FA validate — login successful', { userId: user.id, ip: req.ip });
+
+    res.json({
+      ok: true,
+      token,
+      user: {
+        id: user.id,
+        name: user.username,
+        email: user.email,
+        balance: user.balance,
+        bonus_balance: user.bonus_balance
+      }
+    });
+  } catch (err) {
+    logger.error('2fa/validate error', { error: err.message });
+    res.status(500).json({ error: err.message });
   }
 });
 

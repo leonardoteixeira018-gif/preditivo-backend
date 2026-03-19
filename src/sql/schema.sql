@@ -17,7 +17,9 @@ CREATE TABLE IF NOT EXISTS users (
   rank_profit DECIMAL(18,2),
   rank_win_rate DECIMAL(5,2),
   email_verified_at TIMESTAMPTZ,
+  two_fa_secret VARCHAR(100),
   two_fa_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+  two_fa_enabled_at TIMESTAMPTZ,
   wallet_address VARCHAR(42),
   avatar_url TEXT,
   -- FASE 5 (BLOCO 1): KYC / AML

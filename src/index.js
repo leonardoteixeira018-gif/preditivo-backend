@@ -409,6 +409,11 @@ app.listen(PORT, async () => {
   await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS lgpd_consent_at TIMESTAMPTZ").catch(()=>{});
   await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS lgpd_consent_ip VARCHAR(50)").catch(()=>{});
   await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS data_deletion_requested_at TIMESTAMPTZ").catch(()=>{});
+
+  // BLOCO 8: 2FA TOTP (Google Authenticator / Authy)
+  await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS two_fa_secret VARCHAR(100)").catch(()=>{});
+  await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS two_fa_enabled BOOLEAN NOT NULL DEFAULT FALSE").catch(()=>{});
+  await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS two_fa_enabled_at TIMESTAMPTZ").catch(()=>{});
   await pool.query(`
     CREATE TABLE IF NOT EXISTS lgpd_consents (
       id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
