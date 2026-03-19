@@ -378,6 +378,13 @@ router.post('/submit', auth, async (req, res) => {
       message: 'Dados enviados com sucesso. Sua identidade está em análise — você será notificado por e-mail em até 24h.'
     });
   } catch (err) {
+    // Erro de conectividade com o bureau (Serpro inacessível, credenciais inválidas, etc.)
+    if (err.message === 'bureau_unreachable' || err.isNetworkError) {
+      logger.error('KYC submit error — bureau inacessível', { userId: req.user.id, provider: process.env.BUREAU_PROVIDER });
+      return res.status(502).json({
+        error: 'Serviço de verificação temporariamente indisponível. Tente novamente em alguns minutos.'
+      });
+    }
     logger.error('KYC submit error', { userId: req.user.id, error: err.message });
     res.status(500).json({ error: 'Erro interno do servidor' });
   }

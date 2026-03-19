@@ -306,7 +306,25 @@ async function idwallVerifyDocument({ userId, documentType, documentFront, docum
  */
 async function verifyCPF(params) {
   switch (PROVIDER) {
-    case 'serpro': return serproVerifyCPF(params);
+    case 'serpro': {
+      try {
+        return await serproVerifyCPF(params);
+      } catch (err) {
+        // Falha de rede ou credenciais inválidas — log claro para diagnóstico
+        const isNetworkError = err.message?.includes('fetch failed') || err.cause?.code === 'ENOTFOUND';
+        logger.error('[KYC-BUREAU:serpro] Falha ao conectar com Serpro', {
+          error: err.message,
+          cause: err.cause?.code,
+          hint: isNetworkError
+            ? 'Verifique conectividade com sandbox.apigateway.serpro.gov.br ou configure BUREAU_PROVIDER=stub'
+            : 'Verifique SERPRO_CLIENT_ID e SERPRO_CLIENT_SECRET no Railway',
+        });
+        // Propaga com mensagem descritiva para o route handler retornar 502 (não 500)
+        const friendly = new Error('bureau_unreachable');
+        friendly.isNetworkError = true;
+        throw friendly;
+      }
+    }
     case 'idwall': return idwallVerifyCPF(params);
     default:       return stubVerifyCPF(params);
   }
