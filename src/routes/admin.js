@@ -1697,33 +1697,36 @@ router.delete('/users/:userId', async (req, res) => {
     // users.referred_by não tem ON DELETE CASCADE
     await client.query('UPDATE users SET referred_by = NULL WHERE referred_by = $1', [userId]);
 
-    // Excluir tabelas filhas que podem não ter CASCADE ou têm nomes distintos
-    // A maioria tem ON DELETE CASCADE mas listamos explicitamente por segurança
+    // Excluir tabelas filhas — baseado nas tabelas reais do banco
+    // Todas têm ON DELETE CASCADE mas listamos explicitamente por segurança
     const tables = [
       'kyc_reviews',
       'pep_reviews',
       'coaf_flags',
       'suitability_responses',
-      'user_audit_logs',
       'email_verifications',
       'market_comments',
-      'referral_bonuses',       // referrer_id e referred_id ambos apontam para users
       'bets',
       'deposits',
       'withdrawals',
     ];
 
     for (const table of tables) {
-      // Tenta a coluna user_id; referral_bonuses tem referrer_id/referred_id
-      if (table === 'referral_bonuses') {
-        await client.query('DELETE FROM referral_bonuses WHERE referrer_id = $1 OR referred_id = $1', [userId]);
-      } else {
-        await client.query(`DELETE FROM ${table} WHERE user_id = $1`, [userId]);
-      }
+      await client.query(`DELETE FROM ${table} WHERE user_id = $1`, [userId]);
     }
 
-    // Tabelas opcionais (podem não existir dependendo da versão do schema)
-    const optionalTables = ['push_subscriptions', 'notifications', 'bonus_transactions'];
+    // referral_bonuses tem duas FKs para users (referrer_id e referred_id)
+    await client.query('DELETE FROM referral_bonuses WHERE referrer_id = $1 OR referred_id = $1', [userId]);
+
+    // Tabelas opcionais — deletar com .catch() pois podem não existir em todos os ambientes
+    const optionalTables = [
+      'push_subscriptions',
+      'notifications',
+      'blacklisted_tokens',
+      'user_audit_logs',
+      'audit_logs',
+      'bonus_transactions',
+    ];
     for (const table of optionalTables) {
       await client.query(`DELETE FROM ${table} WHERE user_id = $1`, [userId]).catch(() => {});
     }
