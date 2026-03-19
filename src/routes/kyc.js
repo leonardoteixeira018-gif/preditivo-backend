@@ -13,7 +13,8 @@
  *   GET  /kyc/admin/coaf-flags    → lista flags COAF pendentes
  *   POST /kyc/admin/coaf-flags/:id/resolve → resolve flag COAF
  */
-const router = require('express').Router();
+const express = require('express');
+const router  = express.Router();
 const pool = require('../lib/db');
 const auth = require('../middleware/auth');
 const logger = require('../lib/logger');
@@ -22,6 +23,10 @@ const { validateCPF, maskCPF, KYC_STATUS } = require('../lib/kyc');
 const { verifyCPF, verifyDocument } = require('../lib/kyc-bureau');
 const { runFullScreening } = require('../lib/pep-screening');
 const adminAuth = require('../middleware/adminAuth'); // suporta JWT Bearer e x-admin-secret
+const { createDiditSession, getSessionDecision, verifyWebhookSignature, mapDiditStatus } = require('../lib/didit-bureau');
+const { APP_URL } = require('../lib/appConfig');
+
+const BUREAU_PROVIDER = process.env.BUREAU_PROVIDER || 'stub';
 
 // ── USER ROUTES ──────────────────────────────────────────────────────────────
 
@@ -140,7 +145,46 @@ router.post('/submit', auth, async (req, res) => {
       return res.status(400).json({ error: 'É necessário ter 18 anos ou mais para operar' });
     }
 
-    // Envia para bureau de verificação
+    // ── DIDIT: fluxo assíncrono (redirect para verificação de documento) ────────
+    if (BUREAU_PROVIDER === 'didit') {
+      // Salva dados pessoais e coloca status como 'submitted'
+      await pool.query(`
+        UPDATE users SET
+          cpf = $1, full_name = $2, date_of_birth = $3,
+          kyc_status = 'submitted', kyc_submitted_at = NOW(),
+          kyc_rejected_at = NULL, kyc_rejection_reason = NULL
+        WHERE id = $4
+      `, [cpfValidation.cleaned, full_name.trim(), date_of_birth, req.user.id]);
+
+      const callbackUrl = `${APP_URL}/kyc.html?didit_return=1`;
+      const session = await createDiditSession({
+        userId:      req.user.id,
+        fullName:    full_name.trim(),
+        cpf:         cpfValidation.cleaned,
+        dateOfBirth: date_of_birth,
+        callbackUrl,
+      });
+
+      await pool.query(`
+        INSERT INTO kyc_reviews (user_id, action, actor, notes, provider, provider_id)
+        VALUES ($1, 'submitted', 'user', 'Sessão Didit criada — aguardando verificação', 'didit', $2)
+      `, [req.user.id, session.session_id]);
+
+      await logUserAction(req.user.id, 'kyc_submitted', 'user', req.user.id, {
+        provider: 'didit', sessionId: session.session_id
+      }, req.ip);
+
+      return res.json({
+        ok:            true,
+        kyc_status:    'submitted',
+        provider:      'didit',
+        session_id:    session.session_id,
+        verification_url: session.verification_url,
+        message:       'Redirecionando para verificação de identidade...',
+      });
+    }
+
+    // Envia para bureau de verificação (stub / serpro)
     const bureauResult = await verifyCPF({
       cpf: cpfValidation.cleaned,
       fullName: full_name.trim(),
@@ -444,6 +488,129 @@ router.post('/document', auth, async (req, res) => {
   } catch (err) {
     logger.error('KYC document error', { userId: req.user.id, error: err.message });
     res.status(500).json({ error: 'Erro interno do servidor' });
+  }
+});
+
+// ── DIDIT ROUTES ─────────────────────────────────────────────────────────────
+
+/**
+ * POST /kyc/didit/webhook
+ * Recebe notificações assíncronas do Didit sobre o resultado da verificação.
+ * Sem autenticação JWT — validado via assinatura HMAC.
+ */
+router.post('/didit/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
+  try {
+    const signature = req.headers['x-signature-v2'];
+    const timestamp = req.headers['x-timestamp'];
+    const rawBody   = req.body;
+
+    // Verificar assinatura
+    if (!verifyWebhookSignature(rawBody, signature, timestamp)) {
+      logger.warn('[DIDIT-WEBHOOK] Assinatura inválida rejeitada');
+      return res.status(401).json({ error: 'Invalid signature' });
+    }
+
+    const payload   = JSON.parse(rawBody.toString());
+    const { session_id, status, vendor_data } = payload;
+    const userId    = parseInt(vendor_data);
+
+    logger.info('[DIDIT-WEBHOOK] Recebido', { session_id, status, userId });
+
+    if (!userId || isNaN(userId)) {
+      logger.warn('[DIDIT-WEBHOOK] vendor_data inválido', { vendor_data });
+      return res.json({ received: true });
+    }
+
+    const kycStatus = mapDiditStatus(status);
+
+    if (kycStatus === 'approved') {
+      await pool.query(`
+        UPDATE users SET
+          kyc_status = 'approved',
+          kyc_approved_at = NOW(),
+          kyc_provider_id = $1,
+          kyc_rejected_at = NULL,
+          kyc_rejection_reason = NULL
+        WHERE id = $2
+      `, [session_id, userId]);
+
+      await pool.query(`
+        INSERT INTO kyc_reviews (user_id, action, actor, notes, provider, provider_id)
+        VALUES ($1, 'approved', 'bureau', 'Aprovado automaticamente pelo Didit — verificação de documento concluída', 'didit', $2)
+      `, [userId, session_id]);
+
+      // Rodar triagem PEP após aprovação Didit
+      try {
+        const userRow = await pool.query('SELECT cpf, full_name FROM users WHERE id = $1', [userId]);
+        if (userRow.rows[0]?.cpf) {
+          const screening = await runFullScreening({
+            userId,
+            cpf:      userRow.rows[0].cpf,
+            fullName: userRow.rows[0].full_name,
+          });
+
+          if (screening.pepResult.isPep) {
+            await pool.query(`UPDATE users SET kyc_status = 'submitted' WHERE id = $1`, [userId]);
+            await pool.query(`
+              INSERT INTO kyc_reviews (user_id, action, actor, notes)
+              VALUES ($1, 'pep_flagged', 'system', 'PEP identificado via triagem pós-Didit — aguarda revisão manual')
+            `, [userId]);
+          }
+        }
+      } catch (pepErr) {
+        logger.error('[DIDIT-WEBHOOK] Erro na triagem PEP pós-aprovação', { userId, error: pepErr.message });
+      }
+
+      logger.info('[DIDIT-WEBHOOK] KYC aprovado', { userId, session_id });
+
+    } else if (kycStatus === 'rejected') {
+      await pool.query(`
+        UPDATE users SET
+          kyc_status = 'rejected',
+          kyc_rejected_at = NOW(),
+          kyc_rejection_reason = 'didit_declined',
+          kyc_provider_id = $1
+        WHERE id = $2
+      `, [session_id, userId]);
+
+      await pool.query(`
+        INSERT INTO kyc_reviews (user_id, action, actor, notes, provider, provider_id)
+        VALUES ($1, 'rejected', 'bureau', 'Rejeitado pelo Didit — verificação de documento não aprovada', 'didit', $2)
+      `, [userId, session_id]);
+
+      logger.warn('[DIDIT-WEBHOOK] KYC rejeitado', { userId, session_id, diditStatus: status });
+
+    } else {
+      // In Review, In Progress etc — manter submitted
+      logger.info('[DIDIT-WEBHOOK] Status intermediário, nenhuma ação', { userId, status, kycStatus });
+    }
+
+    res.json({ received: true });
+  } catch (err) {
+    logger.error('[DIDIT-WEBHOOK] Erro no processamento', { error: err.message });
+    res.status(500).json({ error: 'Internal error' });
+  }
+});
+
+/**
+ * GET /kyc/didit/session/:sessionId
+ * Polling: consulta o status de uma sessão Didit (para o frontend verificar após retorno).
+ */
+router.get('/didit/session/:sessionId', auth, async (req, res) => {
+  try {
+    const { sessionId } = req.params;
+    const decision = await getSessionDecision(sessionId);
+    const kycStatus = mapDiditStatus(decision.status);
+
+    res.json({
+      ok:         true,
+      session_id: sessionId,
+      didit_status: decision.status,
+      kyc_status: kycStatus,
+    });
+  } catch (err) {
+    logger.error('[DIDIT] Erro ao consultar sessão', { error: err.message });
+    res.status(500).json({ error: 'Erro ao consultar sessão Didit' });
   }
 });
 
