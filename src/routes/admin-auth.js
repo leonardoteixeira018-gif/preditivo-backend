@@ -4,6 +4,7 @@ const crypto = require('crypto');
 const router = express.Router();
 const adminAuth = require('../middleware/adminAuth');
 const { getAuditLogs } = require('../lib/audit');
+const logger = require('../lib/logger');
 
 /**
  * POST /admin/login
@@ -77,6 +78,12 @@ router.post('/logout', (req, res) => {
  */
 router.get('/audit-logs', adminAuth, async (req, res) => {
   try {
+    logger.info('Admin audit logs retrieval', {
+      action: req.query.action,
+      resourceType: req.query.resourceType,
+      ip: req.ip
+    });
+
     const filters = {};
 
     if (req.query.action) filters.action = req.query.action;
@@ -87,6 +94,10 @@ router.get('/audit-logs', adminAuth, async (req, res) => {
     if (req.query.fromDate) {
       filters.fromDate = new Date(req.query.fromDate);
       if (isNaN(filters.fromDate.getTime())) {
+        logger.warn('Admin audit logs retrieval failed - invalid fromDate', {
+          fromDate: req.query.fromDate,
+          ip: req.ip
+        });
         return res.status(400).json({ error: 'fromDate inválida' });
       }
     }
@@ -94,14 +105,29 @@ router.get('/audit-logs', adminAuth, async (req, res) => {
     if (req.query.toDate) {
       filters.toDate = new Date(req.query.toDate);
       if (isNaN(filters.toDate.getTime())) {
+        logger.warn('Admin audit logs retrieval failed - invalid toDate', {
+          toDate: req.query.toDate,
+          ip: req.ip
+        });
         return res.status(400).json({ error: 'toDate inválida' });
       }
     }
 
     const logs = await getAuditLogs(filters);
+
+    logger.info('Admin audit logs retrieved successfully', {
+      logCount: logs.length,
+      filters: Object.keys(filters),
+      ip: req.ip
+    });
+
     res.json({ ok: true, logs, count: logs.length });
   } catch (err) {
-    console.error('[ERROR] Erro ao recuperar audit logs:', err.message);
+    logger.error('Failed to retrieve admin audit logs', {
+      error: err.message,
+      stack: err.stack,
+      ip: req.ip
+    });
     res.status(500).json({ error: 'Erro ao recuperar logs' });
   }
 });

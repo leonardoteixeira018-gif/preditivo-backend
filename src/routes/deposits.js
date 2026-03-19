@@ -2,6 +2,7 @@ const crypto = require('crypto');
 const rateLimit = require('express-rate-limit');
 const router = require('express').Router();
 const pool = require('../lib/db');
+const logger = require('../lib/logger');
 const auth = require('../middleware/auth');
 const { createCheckoutLink } = require('../lib/infinitepay');
 
@@ -126,22 +127,33 @@ router.post('/infinitepay/webhook/:token', webhookLimiter, async (req, res) => {
   const client = await pool.connect();
 
   try {
+    logger.info('Webhook received from InfinitePay', {
+      ip: req.ip,
+      tokenPrefix: req.params.token.substring(0, 10) + '***'
+    });
+
     // Validar token na URL PRIMEIRO
     if (!verifyWebhookToken(req.params.token)) {
-      console.warn(`[SECURITY] Webhook com token inválido rejeitado — IP: ${req.ip}`);
+      logger.warn('Webhook rejected - invalid token', { ip: req.ip });
       return res.status(401).json({ error: 'Token inválido' });
     }
 
     // Validar assinatura HMAC do payload SEGUNDO
     if (!validateInfinitePaySignature(req)) {
-      console.warn(`[SECURITY] Webhook com assinatura inválida rejeitado — IP: ${req.ip}`);
+      logger.warn('Webhook rejected - invalid signature', { ip: req.ip });
       return res.status(401).json({ error: 'Assinatura inválida' });
     }
 
     const event = extractInfinitePayWebhook(req.body || {});
     if (!event.orderNsu) {
+      logger.warn('Webhook rejected - missing order_nsu', { ip: req.ip });
       return res.status(400).json({ error: 'order_nsu ausente' });
     }
+
+    logger.info('Webhook validation passed', {
+      orderNsu: event.orderNsu,
+      status: event.status
+    });
 
     await client.query('BEGIN');
 

@@ -3,6 +3,8 @@ const pool = require('../lib/db');
 const auth = require('../middleware/auth');
 const { createEmailVerification, consumeEmailVerification } = require('../lib/emailVerification');
 const { APP_BRAND } = require('../lib/appConfig');
+const logger = require('../lib/logger');
+const { logUserAction } = require('../lib/user-audit');
 
 const MIN_WITHDRAWAL = 20;
 
@@ -46,6 +48,13 @@ router.post('/', auth, async (req, res) => {
     const pixKey = String(req.body.pix_key || '').trim();
     const pixKeyType = String(req.body.pix_key_type || '').trim();
 
+    logger.info('Withdrawal request initiated', {
+      userId: req.user.id,
+      amount,
+      pixKeyType,
+      ip: req.ip
+    });
+
     const { row, balance, locked, withdrawable } = await getWithdrawContext(req.user.id);
     const validationError = validateWithdrawalRequest({
       amount,
@@ -57,6 +66,12 @@ router.post('/', auth, async (req, res) => {
     });
 
     if (validationError) {
+      logger.warn('Withdrawal validation failed', {
+        userId: req.user.id,
+        amount,
+        reason: validationError,
+        ip: req.ip
+      });
       return res.status(400).json({ error: validationError });
     }
 
@@ -74,6 +89,13 @@ router.post('/', auth, async (req, res) => {
       intro: `Use o codigo abaixo para confirmar seu saque de R$${amount.toFixed(2)} para a chave PIX ${pixKey}.`
     });
 
+    logger.info('Withdrawal verification email sent', {
+      userId: req.user.id,
+      amount,
+      email: row.email,
+      ip: req.ip
+    });
+
     res.json({
       ok: true,
       requires_verification: true,
@@ -81,7 +103,13 @@ router.post('/', auth, async (req, res) => {
       message: 'Enviamos um codigo para confirmar o saque.'
     });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    logger.error('Withdrawal initiation failed', {
+      userId: req.user.id,
+      error: err.message,
+      stack: err.stack,
+      ip: req.ip
+    });
+    res.status(500).json({ error: 'Erro ao iniciar saque' });
   }
 });
 
@@ -90,7 +118,17 @@ router.post('/verify', auth, async (req, res) => {
 
   try {
     const code = String(req.body.code || '').trim();
+
+    logger.info('Withdrawal verification attempt', {
+      userId: req.user.id,
+      ip: req.ip
+    });
+
     if (!code) {
+      logger.warn('Withdrawal verification failed - missing code', {
+        userId: req.user.id,
+        ip: req.ip
+      });
       return res.status(400).json({ error: 'code e obrigatorio' });
     }
 
@@ -98,6 +136,10 @@ router.post('/verify', auth, async (req, res) => {
 
     const user = await client.query('SELECT * FROM users WHERE id = $1', [req.user.id]);
     if (!user.rows.length) {
+      logger.warn('Withdrawal verification failed - user not found', {
+        userId: req.user.id,
+        ip: req.ip
+      });
       await client.query('ROLLBACK');
       return res.status(404).json({ error: 'Usuario nao encontrado' });
     }
@@ -132,6 +174,12 @@ router.post('/verify', auth, async (req, res) => {
     });
 
     if (validationError) {
+      logger.warn('Withdrawal verification failed - validation error', {
+        userId: req.user.id,
+        amount,
+        reason: validationError,
+        ip: req.ip
+      });
       await client.query('ROLLBACK');
       return res.status(400).json({ error: validationError });
     }
@@ -144,12 +192,40 @@ router.post('/verify', auth, async (req, res) => {
 
     await client.query('COMMIT');
 
+    logger.info('Withdrawal confirmed successfully', {
+      userId: req.user.id,
+      withdrawalId: result.rows[0].id,
+      amount,
+      pixKeyType,
+      ip: req.ip
+    });
+
+    // Log user action for compliance
+    await logUserAction({
+      userId: req.user.id,
+      action: 'withdrawal_confirmed',
+      resourceType: 'withdrawal',
+      resourceId: result.rows[0].id,
+      details: {
+        amount,
+        pixKeyType,
+        status: 'pending'
+      },
+      ipAddress: req.ip
+    });
+
     const newBalance = balance - amount;
     res.json({ withdrawal: result.rows[0], new_balance: newBalance });
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
     const status = /Codigo|Valor maximo|Saldo disponivel/.test(err.message) ? 400 : 500;
-    res.status(status).json({ error: err.message });
+    logger.error('Withdrawal verification failed', {
+      userId: req.user.id,
+      error: err.message,
+      stack: err.stack,
+      ip: req.ip
+    });
+    res.status(status).json({ error: 'Erro ao confirmar saque' });
   } finally {
     client.release();
   }
@@ -163,7 +239,12 @@ router.get('/my', auth, async (req, res) => {
     );
     res.json(result.rows);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    logger.error('Failed to fetch withdrawals', {
+      userId: req.user.id,
+      error: err.message,
+      stack: err.stack
+    });
+    res.status(500).json({ error: 'Erro ao buscar saques' });
   }
 });
 

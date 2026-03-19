@@ -3,6 +3,7 @@ const pool = require('../lib/db');
 const adminAuth = require('../middleware/adminAuth');
 const { processReferralBonus } = require('./deposits');
 const { logAudit } = require('../lib/audit');
+const logger = require('../lib/logger');
 
 router.use(adminAuth);
 
@@ -240,7 +241,12 @@ router.get('/deposits', async (req, res) => {
     `);
     res.json(result.rows);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    logger.error('Failed to fetch deposits', {
+      error: err.message,
+      stack: err.stack,
+      ip: req.ip
+    });
+    res.status(500).json({ error: 'Erro ao buscar depositos' });
   }
 });
 
@@ -248,6 +254,11 @@ router.post('/deposits/:id/confirm', async (req, res) => {
   const client = await pool.connect();
 
   try {
+    logger.info('Admin deposit confirmation attempt', {
+      depositId: req.params.id,
+      ip: req.ip
+    });
+
     await client.query('BEGIN');
 
     const dep = await client.query(
@@ -256,11 +267,19 @@ router.post('/deposits/:id/confirm', async (req, res) => {
     );
 
     if (!dep.rows.length) {
+      logger.warn('Admin deposit confirmation failed - deposit not found', {
+        depositId: req.params.id,
+        ip: req.ip
+      });
       await client.query('ROLLBACK');
       return res.status(404).json({ error: 'Deposito nao encontrado' });
     }
 
     if (dep.rows[0].status === 'confirmed') {
+      logger.warn('Admin deposit confirmation failed - already confirmed', {
+        depositId: req.params.id,
+        ip: req.ip
+      });
       await client.query('ROLLBACK');
       return res.status(400).json({ error: 'Deposito ja confirmado' });
     }
@@ -305,10 +324,23 @@ router.post('/deposits/:id/confirm', async (req, res) => {
       }
     });
 
+    logger.info('Admin deposit confirmed successfully', {
+      depositId: req.params.id,
+      amount: dep.rows[0].amount,
+      userId: dep.rows[0].user_id,
+      ip: req.ip
+    });
+
     res.json({ ok: true });
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
-    res.status(500).json({ error: err.message });
+    logger.error('Admin deposit confirmation failed', {
+      depositId: req.params.id,
+      error: err.message,
+      stack: err.stack,
+      ip: req.ip
+    });
+    res.status(500).json({ error: 'Erro ao confirmar deposito' });
   } finally {
     client.release();
   }
@@ -316,13 +348,30 @@ router.post('/deposits/:id/confirm', async (req, res) => {
 
 router.post('/deposits/:id/reject', async (req, res) => {
   try {
+    logger.info('Admin deposit rejection', {
+      depositId: req.params.id,
+      ip: req.ip
+    });
+
     await pool.query('UPDATE deposits SET status = $1 WHERE id = $2', [
       'rejected',
       req.params.id
     ]);
+
+    logger.info('Admin deposit rejected successfully', {
+      depositId: req.params.id,
+      ip: req.ip
+    });
+
     res.json({ ok: true });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    logger.error('Admin deposit rejection failed', {
+      depositId: req.params.id,
+      error: err.message,
+      stack: err.stack,
+      ip: req.ip
+    });
+    res.status(500).json({ error: 'Erro ao rejeitar deposito' });
   }
 });
 
@@ -337,13 +386,24 @@ router.get('/withdrawals', async (req, res) => {
     `);
     res.json(result.rows);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    logger.error('Failed to fetch withdrawals', {
+      error: err.message,
+      stack: err.stack,
+      ip: req.ip
+    });
+    res.status(500).json({ error: 'Erro ao buscar saques' });
   }
 });
 
 router.post('/withdrawals/:id/pay', async (req, res) => {
   try {
     const { id } = req.params;
+
+    logger.info('Admin withdrawal payment processing', {
+      withdrawalId: id,
+      ip: req.ip
+    });
+
     await pool.query('UPDATE withdrawals SET status = $1 WHERE id = $2', ['paid', id]);
 
     const withdrawal = await pool.query(
@@ -352,6 +412,13 @@ router.post('/withdrawals/:id/pay', async (req, res) => {
     );
 
     if (withdrawal.rows.length) {
+      logger.info('Admin withdrawal paid successfully', {
+        withdrawalId: id,
+        amount: withdrawal.rows[0].amount,
+        userId: withdrawal.rows[0].user_id,
+        ip: req.ip
+      });
+
       const { sendEmail } = require('../lib/email');
       const { APP_BRAND } = require('../lib/appConfig');
       const w = withdrawal.rows[0];
@@ -365,19 +432,40 @@ router.post('/withdrawals/:id/pay', async (req, res) => {
     }
     res.json({ ok: true });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    logger.error('Admin withdrawal payment failed', {
+      withdrawalId: req.params.id,
+      error: err.message,
+      stack: err.stack,
+      ip: req.ip
+    });
+    res.status(500).json({ error: 'Erro ao processar saque' });
   }
 });
 
 router.post('/withdrawals/:id/cancel', async (req, res) => {
   try {
     const { id } = req.params;
+
+    logger.info('Admin withdrawal cancellation', {
+      withdrawalId: id,
+      ip: req.ip
+    });
+
     const withdrawal = await pool.query('SELECT * FROM withdrawals WHERE id = $1', [id]);
 
     if (!withdrawal.rows.length) {
+      logger.warn('Admin withdrawal cancellation failed - not found', {
+        withdrawalId: id,
+        ip: req.ip
+      });
       return res.status(404).json({ error: 'Saque nao encontrado' });
     }
     if (withdrawal.rows[0].status !== 'pending') {
+      logger.warn('Admin withdrawal cancellation failed - already processed', {
+        withdrawalId: id,
+        status: withdrawal.rows[0].status,
+        ip: req.ip
+      });
       return res.status(400).json({ error: 'Saque ja processado' });
     }
 
@@ -386,6 +474,13 @@ router.post('/withdrawals/:id/cancel', async (req, res) => {
       'UPDATE users SET balance = balance + $1 WHERE id = $2',
       [withdrawal.rows[0].amount, withdrawal.rows[0].user_id]
     );
+
+    logger.info('Admin withdrawal cancelled successfully', {
+      withdrawalId: id,
+      amount: withdrawal.rows[0].amount,
+      userId: withdrawal.rows[0].user_id,
+      ip: req.ip
+    });
 
     const user = await pool.query('SELECT email, username FROM users WHERE id = $1', [withdrawal.rows[0].user_id]);
     if (user.rows.length) {
@@ -402,7 +497,13 @@ router.post('/withdrawals/:id/cancel', async (req, res) => {
     }
     res.json({ ok: true });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    logger.error('Admin withdrawal cancellation failed', {
+      withdrawalId: req.params.id,
+      error: err.message,
+      stack: err.stack,
+      ip: req.ip
+    });
+    res.status(500).json({ error: 'Erro ao cancelar saque' });
   }
 });
 
@@ -411,7 +512,12 @@ router.get('/users', async (req, res) => {
     const result = await pool.query('SELECT id, username, email, balance, created_at, is_bot FROM users ORDER BY created_at DESC');
     res.json(result.rows);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    logger.error('Failed to fetch users', {
+      error: err.message,
+      stack: err.stack,
+      ip: req.ip
+    });
+    res.status(500).json({ error: 'Erro ao buscar usuarios' });
   }
 });
 
@@ -485,7 +591,14 @@ router.get('/receita', async (req, res) => {
         };
       })
     });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) {
+    logger.error('Failed to fetch revenue data', {
+      error: err.message,
+      stack: err.stack,
+      ip: req.ip
+    });
+    res.status(500).json({ error: 'Erro ao buscar dados de receita' });
+  }
 });
 
 // POST /admin/balance — ajusta ou define o saldo de qualquer usuário
@@ -493,18 +606,43 @@ router.get('/receita', async (req, res) => {
 // mode "delta" (padrão) → adiciona/subtrai `amount` ao saldo atual
 router.post('/balance', async (req, res) => {
   const { user_id, amount, mode } = req.body;
+
   if (!user_id || amount === undefined || amount === null) {
+    logger.warn('Admin balance adjustment failed - missing parameters', {
+      hasUserId: !!user_id,
+      hasAmount: amount !== undefined && amount !== null,
+      ip: req.ip
+    });
     return res.status(400).json({ error: 'user_id e amount são obrigatórios' });
   }
   const amt = parseFloat(amount);
   if (!Number.isFinite(amt)) {
+    logger.warn('Admin balance adjustment failed - invalid amount', {
+      userId: user_id,
+      amount,
+      ip: req.ip
+    });
     return res.status(400).json({ error: 'amount inválido' });
   }
 
   try {
+    logger.info('Admin balance adjustment attempt', {
+      userId: user_id,
+      amount: amt,
+      mode: mode || 'delta',
+      ip: req.ip
+    });
+
     let result;
     if (mode === 'set') {
-      if (amt < 0) return res.status(400).json({ error: 'Saldo não pode ser negativo' });
+      if (amt < 0) {
+        logger.warn('Admin balance adjustment failed - negative amount', {
+          userId: user_id,
+          amount: amt,
+          ip: req.ip
+        });
+        return res.status(400).json({ error: 'Saldo não pode ser negativo' });
+      }
       result = await pool.query(
         'UPDATE users SET balance = $1 WHERE id = $2 RETURNING id, username, balance',
         [amt, user_id]
@@ -517,12 +655,31 @@ router.post('/balance', async (req, res) => {
       );
     }
     if (!result.rows.length) {
+      logger.warn('Admin balance adjustment failed - user not found', {
+        userId: user_id,
+        ip: req.ip
+      });
       return res.status(404).json({ error: 'Usuário não encontrado' });
     }
     const row = result.rows[0];
+
+    logger.info('Admin balance adjusted successfully', {
+      userId: row.id,
+      username: row.username,
+      newBalance: parseFloat(row.balance),
+      adjustmentAmount: amt,
+      ip: req.ip
+    });
+
     res.json({ ok: true, user_id: row.id, username: row.username, new_balance: parseFloat(row.balance) });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    logger.error('Admin balance adjustment failed', {
+      userId: user_id,
+      error: err.message,
+      stack: err.stack,
+      ip: req.ip
+    });
+    res.status(500).json({ error: 'Erro ao ajustar saldo' });
   }
 });
 
@@ -530,8 +687,20 @@ router.post('/balance', async (req, res) => {
 router.post('/markets', async (req, res) => {
   try {
     const { title, description, category, ends_at, closes_at, image_url } = req.body;
+
+    logger.info('Admin market creation attempt', {
+      title,
+      category: category || 'politica',
+      ip: req.ip
+    });
+
     const marketEndsAt = ends_at || closes_at;
     if (!title || !marketEndsAt) {
+      logger.warn('Admin market creation failed - missing fields', {
+        hasTitle: !!title,
+        hasEndsAt: !!marketEndsAt,
+        ip: req.ip
+      });
       return res.status(400).json({ error: 'title e ends_at sao obrigatorios' });
     }
     const result = await pool.query(
@@ -540,9 +709,24 @@ router.post('/markets', async (req, res) => {
        RETURNING *`,
       [title, description || null, category || 'politica', marketEndsAt, image_url || null]
     );
+
+    logger.info('Admin market created successfully', {
+      marketId: result.rows[0].id,
+      title,
+      category: result.rows[0].category,
+      endsAt: result.rows[0].ends_at,
+      ip: req.ip
+    });
+
     res.json(result.rows[0]);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    logger.error('Admin market creation failed', {
+      title: req.body.title,
+      error: err.message,
+      stack: err.stack,
+      ip: req.ip
+    });
+    res.status(500).json({ error: 'Erro ao criar mercado' });
   }
 });
 
@@ -551,7 +735,19 @@ router.post('/markets/:id/resolve', async (req, res) => {
 
   try {
     const { outcome } = req.body;
+
+    logger.info('Admin market resolution attempt', {
+      marketId: req.params.id,
+      outcome,
+      ip: req.ip
+    });
+
     if (!['yes', 'no'].includes(outcome)) {
+      logger.warn('Admin market resolution failed - invalid outcome', {
+        marketId: req.params.id,
+        outcome,
+        ip: req.ip
+      });
       return res.status(400).json({ error: 'outcome deve ser yes ou no' });
     }
 
@@ -564,6 +760,10 @@ router.post('/markets/:id/resolve', async (req, res) => {
     );
 
     if (!market.rows.length) {
+      logger.warn('Admin market resolution failed - market not found', {
+        marketId: req.params.id,
+        ip: req.ip
+      });
       await client.query('ROLLBACK');
       return res.status(404).json({ error: 'Mercado nao encontrado' });
     }
@@ -572,6 +772,12 @@ router.post('/markets/:id/resolve', async (req, res) => {
 
     // Se já resolvido com outcome diferente → erro (não permite mudar)
     if (m.resolved_at && m.resolved_outcome && m.resolved_outcome !== outcome) {
+      logger.warn('Admin market resolution failed - already resolved with different outcome', {
+        marketId: req.params.id,
+        currentOutcome: m.resolved_outcome,
+        attemptedOutcome: outcome,
+        ip: req.ip
+      });
       await client.query('ROLLBACK');
       return res.status(400).json({ error: `Mercado ja resolvido como "${m.resolved_outcome}". Nao e possivel alterar o resultado.` });
     }
@@ -621,6 +827,16 @@ router.post('/markets/:id/resolve', async (req, res) => {
     }
 
     await client.query('COMMIT');
+
+    logger.info('Admin market resolved successfully', {
+      marketId: req.params.id,
+      marketTitle: m.title,
+      outcome,
+      winnersCount: wonResult.rows.length,
+      losersCount: lostResult.rows.length,
+      totalProcessed: newlyProcessed,
+      ip: req.ip
+    });
 
     // Invalida cache após commit
     const cache = require('../lib/cache');
@@ -777,8 +993,14 @@ router.post('/markets/:id/resolve', async (req, res) => {
     });
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
-    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'ERROR', msg: 'Erro ao resolver mercado', market_id: req.params.id, error: err.message, stack: err.stack }));
-    res.status(500).json({ error: err.message });
+    logger.error('Admin market resolution failed', {
+      marketId: req.params.id,
+      outcome: req.body.outcome,
+      error: err.message,
+      stack: err.stack,
+      ip: req.ip
+    });
+    res.status(500).json({ error: 'Erro ao resolver mercado' });
   } finally {
     client.release();
   }

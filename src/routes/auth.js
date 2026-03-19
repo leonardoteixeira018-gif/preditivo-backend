@@ -2,9 +2,11 @@ const router = require('express').Router();
 const pool = require('../lib/db');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const logger = require('../lib/logger');
 const auth = require('../middleware/auth');
 const { createEmailVerification, consumeEmailVerification } = require('../lib/emailVerification');
 const { APP_BRAND } = require('../lib/appConfig');
+const { getUserAuditLogs } = require('../lib/user-audit');
 
 async function send2faCode(user) {
   return createEmailVerification({
@@ -29,12 +31,29 @@ router.post('/register', async (req, res) => {
     const cleanName = String(name || '').trim();
     const normalizedEmail = String(email || '').trim().toLowerCase();
 
+    logger.info('User registration attempt', {
+      email: normalizedEmail,
+      ip: req.ip,
+      hasReferral: !!ref
+    });
+
     if (!cleanName || !normalizedEmail || !password) {
+      logger.warn('Registration validation failed', {
+        email: normalizedEmail,
+        reason: 'missing_fields',
+        ip: req.ip
+      });
       return res.status(400).json({ error: 'name, email e password sao obrigatorios' });
     }
 
     const exists = await pool.query('SELECT id FROM users WHERE email = $1', [normalizedEmail]);
-    if (exists.rows.length) return res.status(400).json({ error: 'Email ja cadastrado' });
+    if (exists.rows.length) {
+      logger.warn('Registration failed - email already exists', {
+        email: normalizedEmail,
+        ip: req.ip
+      });
+      return res.status(400).json({ error: 'Email ja cadastrado' });
+    }
 
     const usernameExists = await pool.query('SELECT id FROM users WHERE username = $1', [cleanName]);
     if (usernameExists.rows.length) return res.status(400).json({ error: 'Nome de usuario ja cadastrado' });
@@ -67,6 +86,11 @@ router.post('/register', async (req, res) => {
       intro: `Use o codigo abaixo para concluir a criacao da sua conta na ${APP_BRAND} para ${cleanName}.`
     });
 
+    logger.info('Registration email verification sent', {
+      email: normalizedEmail,
+      ip: req.ip
+    });
+
     res.json({
       ok: true,
       requires_verification: true,
@@ -74,7 +98,13 @@ router.post('/register', async (req, res) => {
       message: 'Enviamos um codigo de verificacao para o seu email.'
     });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    logger.error('Registration failed', {
+      email: req.body.email,
+      error: err.message,
+      stack: err.stack,
+      ip: req.ip
+    });
+    res.status(500).json({ error: 'Erro ao registrar. Tente novamente.' });
   }
 });
 
@@ -144,19 +174,49 @@ router.post('/login', async (req, res) => {
     const normalizedEmail = String(req.body.email || '').trim().toLowerCase();
     const { password } = req.body;
 
+    logger.info('Login attempt', {
+      email: normalizedEmail,
+      ip: req.ip
+    });
+
     const result = await pool.query('SELECT * FROM users WHERE email = $1', [normalizedEmail]);
-    if (!result.rows.length) return res.status(400).json({ error: 'Usuario nao encontrado' });
+    if (!result.rows.length) {
+      logger.warn('Login failed - user not found', {
+        email: normalizedEmail,
+        ip: req.ip
+      });
+      return res.status(400).json({ error: 'Usuario nao encontrado' });
+    }
 
     const user = result.rows[0];
     const valid = await bcrypt.compare(password, user.password_hash);
-    if (!valid) return res.status(400).json({ error: 'Senha incorreta' });
+    if (!valid) {
+      logger.warn('Login failed - invalid password', {
+        email: normalizedEmail,
+        ip: req.ip,
+        userId: user.id
+      });
+      return res.status(400).json({ error: 'Senha incorreta' });
+    }
 
     if (user.two_fa_enabled) {
+      logger.info('2FA code sent', {
+        email: normalizedEmail,
+        userId: user.id,
+        ip: req.ip
+      });
       await send2faCode(user);
       return res.json({ requires_2fa: true, email: user.email });
     }
 
     const token = jwt.sign({ id: user.id }, process.env.JWT_SECRET, { expiresIn: '7d' });
+
+    logger.info('User login successful', {
+      email: normalizedEmail,
+      userId: user.id,
+      ip: req.ip
+    });
+
     res.json({
       token,
       user: {
@@ -168,7 +228,13 @@ router.post('/login', async (req, res) => {
       }
     });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    logger.error('Login error', {
+      email: req.body.email,
+      error: err.message,
+      stack: err.stack,
+      ip: req.ip
+    });
+    res.status(500).json({ error: 'Erro ao fazer login. Tente novamente.' });
   }
 });
 
@@ -309,6 +375,34 @@ router.post('/logout', auth, async (req, res) => {
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /audit/my-logs — recupera histórico de auditoria do usuário
+router.get('/audit/my-logs', auth, async (req, res) => {
+  try {
+    const limit = Math.min(parseInt(req.query.limit || 100, 10), 500); // Max 500 logs
+    const logs = await getUserAuditLogs(req.user.id, limit);
+
+    logger.info('User audit logs retrieved', {
+      userId: req.user.id,
+      logCount: logs.length,
+      ip: req.ip
+    });
+
+    res.json({
+      ok: true,
+      logs,
+      count: logs.length
+    });
+  } catch (err) {
+    logger.error('Failed to retrieve user audit logs', {
+      userId: req.user.id,
+      error: err.message,
+      stack: err.stack,
+      ip: req.ip
+    });
+    res.status(500).json({ error: 'Erro ao buscar histórico de auditoria' });
   }
 });
 

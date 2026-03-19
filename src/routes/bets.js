@@ -2,6 +2,8 @@ const router = require('express').Router();
 const pool = require('../lib/db');
 const auth = require('../middleware/auth');
 const cache = require('../lib/cache');
+const logger = require('../lib/logger');
+const { logUserAction } = require('../lib/user-audit');
 
 const TAXA_CASA = 0.02;
 const CACHE_KEY_RANKING = 'ranking:list';
@@ -12,12 +14,30 @@ router.post('/', auth, async (req, res) => {
   try {
     const { market_id, side, amount } = req.body;
 
+    logger.info('Bet placement attempt', {
+      userId: req.user.id,
+      marketId: market_id,
+      side,
+      amount,
+      ip: req.ip
+    });
+
     if (!['yes', 'no'].includes(side)) {
+      logger.warn('Bet validation failed - invalid side', {
+        userId: req.user.id,
+        side,
+        ip: req.ip
+      });
       return res.status(400).json({ error: 'Side deve ser yes ou no' });
     }
 
     const amt = parseFloat(amount);
     if (!amt || amt <= 0 || !Number.isFinite(amt)) {
+      logger.warn('Bet validation failed - invalid amount', {
+        userId: req.user.id,
+        amount,
+        ip: req.ip
+      });
       return res.status(400).json({ error: 'Valor invalido' });
     }
 
@@ -29,16 +49,31 @@ router.post('/', auth, async (req, res) => {
     );
 
     if (!market.rows.length) {
+      logger.warn('Bet validation failed - market not found', {
+        userId: req.user.id,
+        marketId: market_id,
+        ip: req.ip
+      });
       await client.query('ROLLBACK');
       return res.status(404).json({ error: 'Mercado nao encontrado' });
     }
 
     if (market.rows[0].resolved_at) {
+      logger.warn('Bet validation failed - market already resolved', {
+        userId: req.user.id,
+        marketId: market_id,
+        ip: req.ip
+      });
       await client.query('ROLLBACK');
       return res.status(400).json({ error: 'Este mercado ja foi resolvido' });
     }
 
     if (market.rows[0].ends_at && new Date() > new Date(market.rows[0].ends_at)) {
+      logger.warn('Bet validation failed - market betting closed', {
+        userId: req.user.id,
+        marketId: market_id,
+        ip: req.ip
+      });
       await client.query('ROLLBACK');
       return res.status(400).json({ error: 'Este mercado ja encerrou as apostas' });
     }
@@ -49,11 +84,21 @@ router.post('/', auth, async (req, res) => {
     );
 
     if (!user.rows.length) {
+      logger.warn('Bet validation failed - user not found', {
+        userId: req.user.id,
+        ip: req.ip
+      });
       await client.query('ROLLBACK');
       return res.status(404).json({ error: 'Usuario nao encontrado' });
     }
 
     if (parseFloat(user.rows[0].balance) < amt) {
+      logger.warn('Bet validation failed - insufficient balance', {
+        userId: req.user.id,
+        userBalance: user.rows[0].balance,
+        requestAmount: amt,
+        ip: req.ip
+      });
       await client.query('ROLLBACK');
       return res.status(400).json({ error: 'Saldo insuficiente' });
     }
@@ -113,6 +158,32 @@ router.post('/', auth, async (req, res) => {
 
     await client.query('COMMIT');
 
+    logger.info('Bet placed successfully', {
+      userId: req.user.id,
+      betId: bet.rows[0].id,
+      marketId: market_id,
+      side,
+      amount: amt,
+      potentialPayout: potentialPayout,
+      ip: req.ip
+    });
+
+    // Log user action for compliance
+    await logUserAction({
+      userId: req.user.id,
+      action: 'bet_placed',
+      resourceType: 'bet',
+      resourceId: bet.rows[0].id,
+      details: {
+        marketId: market_id,
+        side,
+        amount: amt,
+        potentialPayout,
+        taxa
+      },
+      ipAddress: req.ip
+    });
+
     cache.del(CACHE_KEY_RANKING); // Aposta muda o ranking de volume
 
     const newBalance = parseFloat(user.rows[0].balance) - amt;
@@ -125,7 +196,14 @@ router.post('/', auth, async (req, res) => {
     });
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
-    res.status(500).json({ error: err.message });
+    logger.error('Bet placement failed', {
+      userId: req.user.id,
+      marketId: req.body.market_id,
+      error: err.message,
+      stack: err.stack,
+      ip: req.ip
+    });
+    res.status(500).json({ error: 'Erro ao colocar aposta' });
   } finally {
     client.release();
   }
@@ -143,7 +221,12 @@ router.get('/my', auth, async (req, res) => {
     );
     res.json(result.rows);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    logger.error('Failed to fetch user bets', {
+      userId: req.user.id,
+      error: err.message,
+      stack: err.stack
+    });
+    res.status(500).json({ error: 'Erro ao buscar apostas' });
   }
 });
 
@@ -167,9 +250,32 @@ router.post('/sell', auth, async (req, res) => {
   const client = await pool.connect();
   try {
     const { market_id, side, amount } = req.body;
-    if (!['yes', 'no'].includes(side)) return res.status(400).json({ error: 'Side deve ser yes ou no' });
+
+    logger.info('Bet sell attempt', {
+      userId: req.user.id,
+      marketId: market_id,
+      side,
+      amount,
+      ip: req.ip
+    });
+
+    if (!['yes', 'no'].includes(side)) {
+      logger.warn('Sell validation failed - invalid side', {
+        userId: req.user.id,
+        side,
+        ip: req.ip
+      });
+      return res.status(400).json({ error: 'Side deve ser yes ou no' });
+    }
     const amt = parseFloat(amount);
-    if (!amt || amt <= 0 || !Number.isFinite(amt)) return res.status(400).json({ error: 'Valor inválido' });
+    if (!amt || amt <= 0 || !Number.isFinite(amt)) {
+      logger.warn('Sell validation failed - invalid amount', {
+        userId: req.user.id,
+        amount,
+        ip: req.ip
+      });
+      return res.status(400).json({ error: 'Valor inválido' });
+    }
 
     await client.query('BEGIN');
 
@@ -235,6 +341,31 @@ router.post('/sell', auth, async (req, res) => {
     const userQ = await client.query('SELECT balance FROM users WHERE id = $1', [req.user.id]);
     await client.query('COMMIT');
 
+    logger.info('Bet sold successfully', {
+      userId: req.user.id,
+      marketId: market_id,
+      side,
+      amount: amt,
+      sellValue: sell_value_net,
+      taxa,
+      ip: req.ip
+    });
+
+    // Log user action for compliance
+    await logUserAction({
+      userId: req.user.id,
+      action: 'bet_sold',
+      resourceType: 'bet',
+      resourceId: market_id,
+      details: {
+        side,
+        amount: amt,
+        sellValue: sell_value_net,
+        taxa
+      },
+      ipAddress: req.ip
+    });
+
     cache.del(CACHE_KEY_RANKING);
 
     res.json({
@@ -247,7 +378,14 @@ router.post('/sell', auth, async (req, res) => {
     });
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
-    res.status(500).json({ error: err.message });
+    logger.error('Bet sell failed', {
+      userId: req.user.id,
+      marketId: req.body.market_id,
+      error: err.message,
+      stack: err.stack,
+      ip: req.ip
+    });
+    res.status(500).json({ error: 'Erro ao vender aposta' });
   } finally {
     client.release();
   }
@@ -303,7 +441,12 @@ router.get('/quote', async (req, res) => {
       amount_liquid: amountLiquido.toFixed(2)
     });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    logger.error('Quote calculation failed', {
+      marketId: req.query.market_id,
+      error: err.message,
+      stack: err.stack
+    });
+    res.status(500).json({ error: 'Erro ao calcular cotacao' });
   }
 });
 
@@ -321,7 +464,12 @@ router.get('/market/:market_id/book', async (req, res) => {
     );
     res.json(result.rows);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    logger.error('Failed to fetch order book', {
+      marketId: req.params.market_id,
+      error: err.message,
+      stack: err.stack
+    });
+    res.status(500).json({ error: 'Erro ao buscar livro de ordens' });
   }
 });
 
@@ -360,7 +508,12 @@ router.get('/portfolio', auth, async (req, res) => {
       resolved_at:      r.resolved_at
     })));
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    logger.error('Failed to fetch portfolio', {
+      userId: req.user.id,
+      error: err.message,
+      stack: err.stack
+    });
+    res.status(500).json({ error: 'Erro ao buscar portfolio' });
   }
 });
 
@@ -415,7 +568,15 @@ router.get('/pnl', auth, async (req, res) => {
       win_rate: (wins + losses) > 0 ? ((wins / (wins + losses)) * 100).toFixed(1) : '0.0',
       history: history.rows.map(r => ({ date: r.date, pnl: parseFloat(r.daily_pnl).toFixed(2) }))
     });
-  } catch(err) { res.status(500).json({ error: err.message }); }
+  } catch(err) {
+    logger.error('Failed to fetch P&L', {
+      userId: req.user.id,
+      period: req.query.period,
+      error: err.message,
+      stack: err.stack
+    });
+    res.status(500).json({ error: 'Erro ao buscar P&L' });
+  }
 });
 
 module.exports = router;
