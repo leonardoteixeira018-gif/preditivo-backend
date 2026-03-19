@@ -1571,7 +1571,8 @@ router.get('/users/:userId/compliance', async (req, res) => {
           u.risk_term_accepted_at, u.risk_term_version,
           u.lgpd_consent_at, u.lgpd_consent_ip, u.data_deletion_requested_at,
           u.admin_notes, u.risk_level, u.last_reviewed_at, u.reviewed_by,
-          u.two_fa_enabled, u.two_fa_enabled_at
+          u.two_fa_enabled, u.two_fa_enabled_at,
+          u.self_excluded_until, u.self_excluded_reason
         FROM users u WHERE u.id = $1
       `, [userId]),
       pool.query(

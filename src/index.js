@@ -416,6 +416,10 @@ app.listen(PORT, async () => {
   await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS lgpd_consent_ip VARCHAR(50)").catch(()=>{});
   await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS data_deletion_requested_at TIMESTAMPTZ").catch(()=>{});
 
+  // BLOCO 9: Proteção ao Investidor — auto-exclusão temporária
+  await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS self_excluded_until TIMESTAMPTZ").catch(()=>{});
+  await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS self_excluded_reason VARCHAR(100)").catch(()=>{});
+
   // BLOCO 8: 2FA TOTP (Google Authenticator / Authy)
   await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS two_fa_secret VARCHAR(100)").catch(()=>{});
   await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS two_fa_enabled BOOLEAN NOT NULL DEFAULT FALSE").catch(()=>{});

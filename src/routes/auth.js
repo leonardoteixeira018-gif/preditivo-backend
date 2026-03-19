@@ -883,4 +883,100 @@ router.post('/2fa/validate', async (req, res) => {
   }
 });
 
+// ── BLOCO 9: Auto-exclusão Temporária (Proteção ao Investidor) ────────────────
+
+const ALLOWED_EXCLUSION_PERIODS = [30, 60, 90, 180, 365];
+
+// POST /auth/self-exclude — ativa auto-exclusão temporária
+router.post('/self-exclude', auth, async (req, res) => {
+  try {
+    const { period_days, reason } = req.body;
+    const days = parseInt(period_days, 10);
+
+    if (!ALLOWED_EXCLUSION_PERIODS.includes(days)) {
+      return res.status(400).json({
+        error: `period_days deve ser um dos valores: ${ALLOWED_EXCLUSION_PERIODS.join(', ')}`
+      });
+    }
+
+    const cleanReason = String(reason || 'Solicitação do usuário').substring(0, 100);
+
+    const result = await pool.query(
+      `UPDATE users
+       SET self_excluded_until = NOW() + ($1 || ' days')::INTERVAL,
+           self_excluded_reason = $2
+       WHERE id = $3
+       RETURNING self_excluded_until`,
+      [days, cleanReason, req.user.id]
+    );
+
+    const excluded_until = result.rows[0].self_excluded_until;
+
+    logger.info('User self-excluded', { userId: req.user.id, days, reason: cleanReason, excluded_until, ip: req.ip });
+
+    res.json({
+      ok: true,
+      excluded_until,
+      message: `Conta suspensa temporariamente por ${days} dias.`
+    });
+  } catch (err) {
+    logger.error('self-exclude error', { error: err.message });
+    res.status(500).json({ error: 'Erro interno' });
+  }
+});
+
+// DELETE /auth/self-exclude — remove auto-exclusão (apenas após prazo ou admin)
+router.delete('/self-exclude', auth, async (req, res) => {
+  try {
+    const result = await pool.query(
+      'SELECT self_excluded_until FROM users WHERE id = $1',
+      [req.user.id]
+    );
+
+    const until = result.rows[0]?.self_excluded_until;
+
+    if (until && new Date(until) > new Date()) {
+      return res.status(403).json({
+        error: 'EXCLUSION_ACTIVE',
+        message: 'A auto-exclusão ainda está vigente e não pode ser removida antes do prazo.',
+        excluded_until: until
+      });
+    }
+
+    await pool.query(
+      'UPDATE users SET self_excluded_until = NULL, self_excluded_reason = NULL WHERE id = $1',
+      [req.user.id]
+    );
+
+    logger.info('User self-exclusion removed', { userId: req.user.id, ip: req.ip });
+
+    res.json({ ok: true });
+  } catch (err) {
+    logger.error('delete self-exclude error', { error: err.message });
+    res.status(500).json({ error: 'Erro interno' });
+  }
+});
+
+// GET /auth/self-exclusion-status — consulta status da auto-exclusão
+router.get('/self-exclusion-status', auth, async (req, res) => {
+  try {
+    const result = await pool.query(
+      'SELECT self_excluded_until, self_excluded_reason FROM users WHERE id = $1',
+      [req.user.id]
+    );
+    const row = result.rows[0];
+    const until = row?.self_excluded_until;
+    const active = !!(until && new Date(until) > new Date());
+
+    res.json({
+      active,
+      excluded_until: until || null,
+      reason: row?.self_excluded_reason || null
+    });
+  } catch (err) {
+    logger.error('self-exclusion-status error', { error: err.message });
+    res.status(500).json({ error: 'Erro interno' });
+  }
+});
+
 module.exports = router;
