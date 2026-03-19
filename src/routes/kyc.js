@@ -147,15 +147,71 @@ router.post('/submit', auth, async (req, res) => {
       dateOfBirth: date_of_birth
     });
 
-    if (!bureauResult.ok) {
+    // Erro de comunicação com o bureau (HTTP 5xx, timeout, etc.)
+    if (!bureauResult.ok && !bureauResult.status) {
       logger.error('KYC bureau CPF verification failed', {
         userId: req.user.id,
         bureauError: bureauResult.error
       });
-      return res.status(502).json({ error: 'Erro ao verificar CPF. Tente novamente.' });
+      return res.status(502).json({ error: 'Erro ao verificar CPF. Tente novamente em instantes.' });
     }
 
-    // Salva dados e atualiza status
+    // ── CPF com situação irregular na Receita Federal → rejeição imediata ──────
+    // Códigos: suspenso, falecido, cancelado, fraude, nulo, etc.
+    // Rejeição automática — mensagem vaga ao usuário (tipping-off prohibition)
+    if (bureauResult.status === 'rejected' && bureauResult.rejectionReason !== 'name_mismatch') {
+      logger.warn('[KYC] CPF rejeitado pelo bureau — situação irregular', {
+        userId: req.user.id,
+        cpfMasked: maskCPF(cpfValidation.cleaned),
+        reason: bureauResult.rejectionReason,
+        provider: bureauResult.provider
+      });
+
+      // Salva CPF e rejeita imediatamente
+      await pool.query(`
+        UPDATE users SET
+          cpf = $1,
+          full_name = $2,
+          date_of_birth = $3,
+          kyc_status = 'rejected',
+          kyc_submitted_at = NOW(),
+          kyc_rejected_at = NOW(),
+          kyc_rejection_reason = $4,
+          kyc_provider_id = $5
+        WHERE id = $6
+      `, [
+        cpfValidation.cleaned,
+        full_name.trim(),
+        date_of_birth,
+        bureauResult.rejectionReason,
+        bureauResult.providerId,
+        req.user.id
+      ]);
+
+      await pool.query(`
+        INSERT INTO kyc_reviews
+          (user_id, action, actor, notes, provider, provider_id)
+        VALUES ($1, 'rejected', 'bureau', $2, $3, $4)
+      `, [
+        req.user.id,
+        `Rejeitado automaticamente pelo bureau: ${bureauResult.rejectionReason}`,
+        bureauResult.provider,
+        bureauResult.providerId
+      ]);
+
+      await logUserAction(req.user.id, 'kyc_rejected_bureau', 'system', req.user.id, {
+        cpfMasked: maskCPF(cpfValidation.cleaned),
+        reason: bureauResult.rejectionReason
+      }, req.ip);
+
+      return res.status(403).json({
+        ok: false,
+        kyc_status: KYC_STATUS.REJECTED,
+        message: 'Não foi possível verificar sua identidade. Verifique os dados informados e tente novamente.'
+      });
+    }
+
+    // Salva dados e atualiza status para 'submitted'
     await pool.query(`
       UPDATE users SET
         cpf = $1,
@@ -182,6 +238,48 @@ router.post('/submit', auth, async (req, res) => {
       VALUES ($1, 'submitted', 'user', 'Dados pessoais enviados pelo usuário', $2, $3)
     `, [req.user.id, bureauResult.provider, bureauResult.providerId]);
 
+    // ── Alerta de nome divergente → revisão manual obrigatória ─────────────────
+    // O bureau aprovou o CPF (situação regular) mas o nome declarado não bate
+    // com o nome na Receita Federal. Não rejeitamos automaticamente (pode ser
+    // abreviação ou nome social), mas inserimos um alerta na fila do admin.
+    if (bureauResult.status === 'rejected' && bureauResult.rejectionReason === 'name_mismatch') {
+      logger.warn('[KYC] Nome divergente do bureau — requer revisão manual', {
+        userId: req.user.id,
+        cpfMasked: maskCPF(cpfValidation.cleaned),
+        nameScore: bureauResult.rawResponse?.nameScore,
+        provider: bureauResult.provider
+      });
+
+      await pool.query(`
+        INSERT INTO kyc_reviews
+          (user_id, action, actor, notes, provider, provider_id)
+        VALUES ($1, 'bureau_alert', 'bureau', $2, $3, $4)
+      `, [
+        req.user.id,
+        `ALERTA: Nome declarado diverge do cadastro da Receita Federal (score=${bureauResult.rawResponse?.nameScore ?? '?'}). Revisar antes de aprovar.`,
+        bureauResult.provider,
+        bureauResult.providerId
+      ]);
+
+      await logUserAction(req.user.id, 'kyc_submitted', 'user', req.user.id, {
+        cpfMasked: maskCPF(cpfValidation.cleaned),
+        bureauProvider: bureauResult.provider,
+        alert: 'name_mismatch'
+      }, req.ip);
+
+      logger.info('KYC data submitted with name alert — awaiting manual review', {
+        userId: req.user.id,
+        cpfMasked: maskCPF(cpfValidation.cleaned)
+      });
+
+      // Resposta neutra ao usuário — não revelar divergência (tipping-off)
+      return res.json({
+        ok: true,
+        kyc_status: KYC_STATUS.SUBMITTED,
+        message: 'Dados enviados com sucesso. Sua identidade está em análise — você será notificado por e-mail em até 24h.'
+      });
+    }
+
     await logUserAction(req.user.id, 'kyc_submitted', 'user', req.user.id, {
       cpfMasked: maskCPF(cpfValidation.cleaned),
       bureauProvider: bureauResult.provider
@@ -195,7 +293,7 @@ router.post('/submit', auth, async (req, res) => {
       bureauStatus: bureauResult.status
     });
 
-    // Se o bureau aprovou automaticamente (stub), rodar triagem PEP/sanções antes de aprovar
+    // Se o bureau aprovou (CPF regular + nome ok), rodar triagem PEP/sanções antes de aprovar
     if (bureauResult.status === 'approved') {
       const screeningResult = await runFullScreening({
         userId: req.user.id,
@@ -365,10 +463,21 @@ router.get('/admin/pending', adminAuth, async (req, res) => {
         u.pep_checked_at,
         u.sanctions_status,
         u.created_at,
-        (SELECT COUNT(*) FROM kyc_reviews kr WHERE kr.user_id = u.id) AS review_count
+        (SELECT COUNT(*) FROM kyc_reviews kr WHERE kr.user_id = u.id) AS review_count,
+        -- Verifica se existe alerta de nome divergente do bureau
+        EXISTS (
+          SELECT 1 FROM kyc_reviews kr
+          WHERE kr.user_id = u.id AND kr.action = 'bureau_alert'
+        ) AS has_bureau_alert,
+        -- Busca a nota do alerta mais recente para exibir no painel
+        (
+          SELECT kr.notes FROM kyc_reviews kr
+          WHERE kr.user_id = u.id AND kr.action = 'bureau_alert'
+          ORDER BY kr.created_at DESC LIMIT 1
+        ) AS bureau_alert_notes
       FROM users u
       WHERE u.kyc_status = 'submitted'
-      ORDER BY u.kyc_submitted_at ASC
+      ORDER BY has_bureau_alert DESC, u.pep_status DESC, u.kyc_submitted_at ASC
     `);
 
     res.json({ ok: true, count: result.rows.length, users: result.rows });
