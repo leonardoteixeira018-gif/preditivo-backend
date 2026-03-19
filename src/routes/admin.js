@@ -4,8 +4,74 @@ const adminAuth = require('../middleware/adminAuth');
 const { processReferralBonus } = require('./deposits');
 const { logAudit } = require('../lib/audit');
 const logger = require('../lib/logger');
+const cache = require('../lib/cache');
 
 router.use(adminAuth);
+
+// ── DASHBOARD ─────────────────────────────────────────────────────────────────
+router.get('/dashboard', async (req, res) => {
+  try {
+    const cached = cache.get('admin:dashboard');
+    if (cached) return res.json(cached);
+
+    const result = await pool.query(`
+      WITH
+        withdrawals_pending AS (
+          SELECT COUNT(*) AS count, COALESCE(SUM(amount), 0) AS total
+          FROM withdrawals WHERE status = 'pending'
+        ),
+        deposits_pending AS (
+          SELECT COUNT(*) AS count, COALESCE(SUM(amount), 0) AS total
+          FROM deposits WHERE status = 'pending'
+        ),
+        users_new AS (
+          SELECT
+            COUNT(*) FILTER (WHERE created_at >= CURRENT_DATE)               AS today,
+            COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '7 days')  AS week,
+            COUNT(*)                                                          AS total
+          FROM users WHERE COALESCE(is_bot, FALSE) = FALSE
+        ),
+        bets_volume AS (
+          SELECT
+            COALESCE(SUM(b.amount) FILTER (WHERE b.created_at >= CURRENT_DATE),              0) AS today,
+            COALESCE(SUM(b.amount) FILTER (WHERE b.created_at >= NOW() - INTERVAL '7 days'), 0) AS week
+          FROM bets b
+          JOIN users u ON u.id = b.user_id
+          WHERE COALESCE(u.is_bot, FALSE) = FALSE
+        ),
+        revenue AS (
+          SELECT
+            COALESCE(SUM(b.taxa) FILTER (WHERE b.created_at >= CURRENT_DATE),              0) AS today,
+            COALESCE(SUM(b.taxa) FILTER (WHERE b.created_at >= NOW() - INTERVAL '7 days'), 0) AS week
+          FROM bets b
+          JOIN users u ON u.id = b.user_id
+          WHERE COALESCE(u.is_bot, FALSE) = FALSE
+        ),
+        markets_summary AS (
+          SELECT
+            COUNT(*) FILTER (WHERE status = 'open')         AS open,
+            COUNT(*) FILTER (WHERE status = 'closed')       AS closed,
+            COUNT(*) FILTER (WHERE resolved_at IS NOT NULL) AS resolved
+          FROM markets
+        )
+      SELECT
+        row_to_json(withdrawals_pending) AS withdrawals_pending,
+        row_to_json(deposits_pending)    AS deposits_pending,
+        row_to_json(users_new)           AS users_new,
+        row_to_json(bets_volume)         AS bets_volume,
+        row_to_json(revenue)             AS revenue,
+        row_to_json(markets_summary)     AS markets
+      FROM withdrawals_pending, deposits_pending, users_new, bets_volume, revenue, markets_summary
+    `);
+
+    const dashboard = result.rows[0];
+    cache.set('admin:dashboard', dashboard, 30_000); // 30s TTL
+    res.json(dashboard);
+  } catch (err) {
+    logger.error('Dashboard query failed', { error: err.message, stack: err.stack });
+    res.status(500).json({ error: 'Erro ao carregar dashboard' });
+  }
+});
 
 const MARKET_CURATION_RULES = [
   {
@@ -331,6 +397,7 @@ router.post('/deposits/:id/confirm', async (req, res) => {
       ip: req.ip
     });
 
+    cache.del('admin:dashboard');
     res.json({ ok: true });
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
@@ -363,6 +430,7 @@ router.post('/deposits/:id/reject', async (req, res) => {
       ip: req.ip
     });
 
+    cache.del('admin:dashboard');
     res.json({ ok: true });
   } catch (err) {
     logger.error('Admin deposit rejection failed', {
@@ -430,6 +498,7 @@ router.post('/withdrawals/:id/pay', async (req, res) => {
          <p>Obrigado por utilizar a ${APP_BRAND}.</p>`
       );
     }
+    cache.del('admin:dashboard');
     res.json({ ok: true });
   } catch (err) {
     logger.error('Admin withdrawal payment failed', {
@@ -481,6 +550,8 @@ router.post('/withdrawals/:id/cancel', async (req, res) => {
       userId: withdrawal.rows[0].user_id,
       ip: req.ip
     });
+
+    cache.del('admin:dashboard');
 
     const user = await pool.query('SELECT email, username FROM users WHERE id = $1', [withdrawal.rows[0].user_id]);
     if (user.rows.length) {
@@ -839,9 +910,9 @@ router.post('/markets/:id/resolve', async (req, res) => {
     });
 
     // Invalida cache após commit
-    const cache = require('../lib/cache');
     cache.del('markets:list');
     cache.del('ranking:list');
+    cache.del('admin:dashboard');
 
     // Rollover em paralelo (fire-and-forget) — sem esperar
     const allProcessedUids = [...new Set([

@@ -290,6 +290,9 @@ app.listen(PORT, async () => {
     ON push_subscriptions(user_id, (subscription->>'endpoint'))
   `).catch(() => {});
 
+  // FASE 4: coluna risk_flag para detecção de saques suspeitos
+  await pool.query('ALTER TABLE withdrawals ADD COLUMN IF NOT EXISTS risk_flag BOOLEAN NOT NULL DEFAULT FALSE').catch(() => {});
+
   // Auto-fechar mercados expirados a cada 5 minutos
   const { closeExpiredMarkets } = require('./routes/markets');
   setInterval(() => closeExpiredMarkets().catch(err =>

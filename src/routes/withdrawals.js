@@ -184,10 +184,29 @@ router.post('/verify', auth, async (req, res) => {
       return res.status(400).json({ error: validationError });
     }
 
+    // Anomaly detection: saque logo após depósito (risco de lavagem)
+    const recentDeposit = await client.query(`
+      SELECT COUNT(*) AS count, COALESCE(SUM(amount), 0) AS total
+      FROM deposits
+      WHERE user_id = $1
+        AND status = 'confirmed'
+        AND created_at >= NOW() - INTERVAL '60 minutes'
+    `, [req.user.id]);
+
+    const isRapidCashout = parseInt(recentDeposit.rows[0].count) > 0;
+    if (isRapidCashout) {
+      logger.warn('Anomaly: rapid cashout after deposit', {
+        userId: req.user.id,
+        withdrawalAmount: amount,
+        recentDepositTotal: recentDeposit.rows[0].total,
+        ip: req.ip
+      });
+    }
+
     await client.query('UPDATE users SET balance = balance - $1 WHERE id = $2', [amount, req.user.id]);
     const result = await client.query(
-      'INSERT INTO withdrawals (user_id, amount, pix_key, pix_key_type, status) VALUES ($1, $2, $3, $4, $5) RETURNING *',
-      [req.user.id, amount, pixKey, pixKeyType, 'pending']
+      'INSERT INTO withdrawals (user_id, amount, pix_key, pix_key_type, status, risk_flag) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *',
+      [req.user.id, amount, pixKey, pixKeyType, 'pending', isRapidCashout]
     );
 
     await client.query('COMMIT');

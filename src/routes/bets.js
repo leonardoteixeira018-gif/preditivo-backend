@@ -103,6 +103,19 @@ router.post('/', auth, async (req, res) => {
       return res.status(400).json({ error: 'Saldo insuficiente' });
     }
 
+    // Anomaly detection: aposta desproporcional ao saldo (não bloqueia)
+    const balanceRatio = amt / parseFloat(user.rows[0].balance);
+    if (balanceRatio > 0.5) {
+      logger.warn('Anomaly: large bet relative to balance', {
+        userId: req.user.id,
+        betAmount: amt,
+        userBalance: user.rows[0].balance,
+        ratio: (balanceRatio * 100).toFixed(1) + '%',
+        marketId: market_id,
+        ip: req.ip
+      });
+    }
+
     const marketRow = market.rows[0];
     const qYes = parseFloat(marketRow.q_yes);
     const qNo = parseFloat(marketRow.q_no);
