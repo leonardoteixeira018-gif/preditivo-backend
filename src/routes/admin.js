@@ -5,6 +5,10 @@ const { processReferralBonus } = require('./deposits');
 const { logAudit } = require('../lib/audit');
 const logger = require('../lib/logger');
 const cache = require('../lib/cache');
+const { validateCPF } = require('../lib/kyc');
+const { verifyCPF } = require('../lib/kyc-bureau');
+const { runFullScreening } = require('../lib/pep-screening');
+const { validateAnswers, calculateProfile, calcExpiresAt } = require('../lib/suitability');
 
 router.use(adminAuth);
 
@@ -1657,6 +1661,207 @@ router.patch('/users/:userId/compliance', async (req, res) => {
     res.json({ ok: true });
   } catch (err) {
     logger.error('User compliance update error', { userId, error: err.message });
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── SANDBOX DE TESTES ─────────────────────────────────────────────────────────
+
+/**
+ * GET /admin/sandbox/users
+ * Lista os 100 usuários mais recentes para o selector do sandbox.
+ */
+router.get('/sandbox/users', async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT id, username, email, kyc_status, suitability_profile
+      FROM users
+      WHERE COALESCE(is_bot, FALSE) = FALSE
+      ORDER BY created_at DESC
+      LIMIT 100
+    `);
+    res.json({ ok: true, users: result.rows });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /admin/simulate/kyc
+ * Roda o fluxo completo de KYC (bureau + PEP + sanções) para um usuário
+ * com os dados fornecidos pelo admin, sem exigir sessão do usuário.
+ *
+ * Body: { user_id, cpf, full_name, date_of_birth, apply: boolean }
+ * Retorna o resultado detalhado de cada etapa do pipeline.
+ * Se apply=true, salva os resultados no DB.
+ */
+router.post('/simulate/kyc', async (req, res) => {
+  const { user_id, cpf: rawCpf, full_name, date_of_birth, apply = false } = req.body;
+
+  if (!user_id || !rawCpf || !full_name || !date_of_birth) {
+    return res.status(400).json({ error: 'user_id, cpf, full_name e date_of_birth são obrigatórios' });
+  }
+
+  // Valida CPF
+  const cpfResult = validateCPF(rawCpf);
+  if (!cpfResult.valid) {
+    return res.status(400).json({ error: cpfResult.error || 'CPF inválido' });
+  }
+  const cpf = cpfResult.cleaned;
+
+  // Valida idade mínima 18 anos
+  const dob = new Date(date_of_birth);
+  if (isNaN(dob)) return res.status(400).json({ error: 'Data de nascimento inválida' });
+  const age = (Date.now() - dob.getTime()) / (365.25 * 24 * 3600 * 1000);
+  if (age < 18) return res.status(400).json({ error: 'Usuário deve ter 18 anos ou mais' });
+
+  try {
+    // 1. Bureau (CPF)
+    const bureauResult = await verifyCPF({ cpf, fullName: full_name, dateOfBirth: date_of_birth });
+
+    let pepResult = null;
+    let sanctionsResult = null;
+    let finalStatus = 'rejected';
+    let finalMessage = '';
+
+    if (!bureauResult.ok) {
+      finalStatus = 'bureau_error';
+      finalMessage = 'Bureau indisponível — não foi possível verificar o CPF';
+    } else if (bureauResult.status === 'rejected') {
+      finalStatus = 'rejected';
+      finalMessage = `Rejeitado pelo bureau: ${bureauResult.rejectionReason || 'CPF inválido ou situação irregular'}`;
+    } else {
+      // 2. PEP + Sanções
+      const screening = await runFullScreening({ userId: user_id, cpf, fullName: full_name });
+      pepResult = screening.pepResult;
+      sanctionsResult = screening.sanctionsResult;
+
+      if (sanctionsResult && sanctionsResult.isSanctioned) {
+        finalStatus = 'rejected';
+        finalMessage = 'Verificação de identidade não aprovada. (sanção detectada)';
+      } else if (pepResult && pepResult.isPep) {
+        finalStatus = 'submitted';
+        finalMessage = 'PEP identificado — aguardando revisão manual do admin';
+      } else {
+        finalStatus = 'approved';
+        finalMessage = 'Identidade verificada com sucesso!';
+      }
+    }
+
+    // 3. Aplica ao DB se solicitado
+    if (apply && bureauResult.ok) {
+      const kycStatus = finalStatus === 'approved' ? 'approved'
+        : finalStatus === 'submitted' ? 'submitted'
+        : 'rejected';
+
+      await pool.query(
+        `UPDATE users SET
+          cpf = $1,
+          full_name = $2,
+          date_of_birth = $3,
+          kyc_status = $4,
+          kyc_submitted_at = NOW(),
+          kyc_provider_id = $5,
+          ${kycStatus === 'approved' ? 'kyc_approved_at = NOW(),' : ''}
+          ${kycStatus === 'rejected' ? `kyc_rejection_reason = '${sanctionsResult?.isSanctioned ? 'sanctions_match' : 'bureau_rejected'}',` : ''}
+          last_reviewed_at = NOW(),
+          reviewed_by = 'admin_sandbox'
+        WHERE id = $6`,
+        [cpf, full_name.trim(), date_of_birth, kycStatus, bureauResult.providerId, user_id]
+      );
+      logger.info('[SANDBOX] KYC simulado e aplicado', { user_id, finalStatus });
+    }
+
+    res.json({
+      ok: true,
+      apply,
+      finalStatus,
+      finalMessage,
+      bureau: {
+        provider: bureauResult.provider,
+        status: bureauResult.status,
+        providerId: bureauResult.providerId,
+        rejectionReason: bureauResult.rejectionReason || null,
+      },
+      pep: pepResult ? {
+        isPep: pepResult.isPep,
+        confidence: pepResult.confidence,
+        source: pepResult.source,
+        matchedKeywords: pepResult.details?.matchedKeywords || [],
+      } : null,
+      sanctions: sanctionsResult ? {
+        isSanctioned: sanctionsResult.isSanctioned,
+        lists: sanctionsResult.lists || [],
+        matchType: sanctionsResult.details?.matchType || null,
+      } : null,
+    });
+  } catch (err) {
+    logger.error('[SANDBOX] Erro na simulação KYC', { error: err.message });
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /admin/simulate/suitability
+ * Calcula o perfil de investidor com respostas fornecidas pelo admin,
+ * sem exigir sessão do usuário.
+ *
+ * Body: { user_id, answers: { objetivo, perda, experiencia, horizonte, renda }, apply: boolean }
+ */
+router.post('/simulate/suitability', async (req, res) => {
+  const { user_id, answers, apply = false } = req.body;
+
+  if (!user_id || !answers) {
+    return res.status(400).json({ error: 'user_id e answers são obrigatórios' });
+  }
+
+  const validationError = validateAnswers(answers);
+  if (validationError) return res.status(400).json({ error: validationError });
+
+  const { profile, score, limits, profileData } = calculateProfile(answers);
+  const expiresAt = calcExpiresAt();
+
+  try {
+    if (apply) {
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        await client.query(
+          `UPDATE users SET
+            suitability_profile = $1,
+            suitability_score = $2,
+            suitability_completed_at = NOW(),
+            suitability_expires_at = $3
+          WHERE id = $4`,
+          [profile, score, expiresAt, user_id]
+        );
+        await client.query(
+          `INSERT INTO suitability_responses (user_id, profile, score, answers, expires_at)
+           VALUES ($1, $2, $3, $4, $5)`,
+          [user_id, profile, score, JSON.stringify(answers), expiresAt]
+        );
+        await client.query('COMMIT');
+        logger.info('[SANDBOX] Suitability simulada e aplicada', { user_id, profile, score });
+      } catch (err) {
+        await client.query('ROLLBACK');
+        throw err;
+      } finally {
+        client.release();
+      }
+    }
+
+    res.json({
+      ok: true,
+      apply,
+      profile,
+      profileLabel: profileData.label,
+      profileDescription: profileData.description,
+      score,
+      limits,
+      expiresAt: expiresAt.toISOString(),
+    });
+  } catch (err) {
+    logger.error('[SANDBOX] Erro na simulação Suitability', { error: err.message });
     res.status(500).json({ error: err.message });
   }
 });
