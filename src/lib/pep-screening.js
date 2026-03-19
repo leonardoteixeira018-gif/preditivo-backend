@@ -16,6 +16,7 @@
  */
 const pool = require('./db');
 const logger = require('./logger');
+const { getSerproToken, getBaseUrl } = require('./serpro-auth');
 
 const PEP_PROVIDER = process.env.PEP_PROVIDER || 'stub';
 
@@ -95,15 +96,107 @@ async function stubScreenSanctions({ cpf, fullName }) {
   return { isSanctioned: false, lists: [], details: {} };
 }
 
-// ── Provider stubs (integração futura) ───────────────────────────────────────
+// ── Serpro PEP (produção — lista CGU) ─────────────────────────────────────────
 
-async function serproScreenPEP() {
-  throw new Error('SERPRO PEP screening: não implementado. Configure PEP_PROVIDER=stub para desenvolvimento.');
+/**
+ * Consulta se o CPF consta na lista PEP da CGU via API Serpro.
+ *
+ * Endpoint: GET {baseUrl}/consulta-pep/v1/pep/{cpf}
+ * HTTP 200 → PEP encontrado (retorna cargo, órgão, período)
+ * HTTP 404 → CPF não consta na lista PEP
+ * Outros   → erro de API, lança exceção para ser capturada pelo runFullScreening
+ *
+ * Nota: Sanções internacionais (OFAC, ONU, UE) não estão disponíveis via
+ * Serpro — screenSanctions continua usando o stub quando PEP_PROVIDER=serpro.
+ */
+async function serproScreenPEP({ cpf, fullName }) {
+  const token     = await getSerproToken();
+  const baseUrl   = getBaseUrl();
+  const cpfDigits = String(cpf).replace(/\D/g, '');
+  const url       = `${baseUrl}/consulta-pep/v1/pep/${cpfDigits}`;
+
+  logger.info('[PEP-SCREENING:serpro] Consultando lista PEP da CGU', {
+    cpf: cpfDigits.slice(0, 3) + '***',
+    env: process.env.SERPRO_ENV || 'trial',
+  });
+
+  const res = await fetch(url, {
+    method: 'GET',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Role':          'INTER_CONSULTA_PEP',
+      'Content-Type':  'application/json',
+    },
+  });
+
+  // CPF não consta na lista PEP
+  if (res.status === 404) {
+    logger.info('[PEP-SCREENING:serpro] CPF não consta na lista PEP', {
+      cpf: cpfDigits.slice(0, 3) + '***',
+    });
+    return {
+      isPep:      false,
+      confidence: 0,
+      source:     'serpro',
+      details:    {},
+    };
+  }
+
+  if (!res.ok) {
+    const body = await res.text();
+    logger.error('[PEP-SCREENING:serpro] Erro na consulta PEP', {
+      status: res.status,
+      body,
+      cpf: cpfDigits.slice(0, 3) + '***',
+    });
+    throw new Error(`Serpro PEP API error ${res.status}: ${body}`);
+  }
+
+  // CPF encontrado na lista PEP — ex. resposta:
+  // { ni, nome, cargo, orgao, uf, dataInicio, dataFim, tipoVinculo }
+  const data = await res.json();
+
+  logger.warn('[PEP-SCREENING:serpro] CPF identificado como PEP', {
+    cpf:        cpfDigits.slice(0, 3) + '***',
+    cargo:      data.cargo,
+    orgao:      data.orgao,
+    dataInicio: data.dataInicio,
+    dataFim:    data.dataFim,
+  });
+
+  return {
+    isPep:      true,
+    confidence: 1.0, // Lista oficial CGU → confiança máxima
+    source:     'serpro',
+    details:    {
+      cargo:       data.cargo,
+      orgao:       data.orgao,
+      uf:          data.uf,
+      dataInicio:  data.dataInicio,
+      dataFim:     data.dataFim,
+      tipoVinculo: data.tipoVinculo,
+      nomeBureau:  data.nome,
+    },
+  };
 }
 
-async function serproScreenSanctions() {
-  throw new Error('SERPRO sanctions screening: não implementado. Configure PEP_PROVIDER=stub para desenvolvimento.');
+/**
+ * Sanções internacionais (OFAC/ONU/UE) — Serpro não cobre estas listas.
+ * Retorna sempre 'clear' quando PEP_PROVIDER=serpro.
+ * Para triagem real de sanções internacionais, configure um provider específico.
+ */
+async function serproScreenSanctions({ cpf, fullName }) {
+  logger.info('[PEP-SCREENING:serpro] Sanções internacionais: Serpro não cobre OFAC/ONU/UE — retornando clear', {
+    cpf: String(cpf).slice(0, 3) + '***',
+  });
+  return {
+    isSanctioned: false,
+    lists:        [],
+    details:      { note: 'serpro_does_not_cover_international_sanctions' },
+  };
 }
+
+// ── Idwall (futuro) ───────────────────────────────────────────────────────────
 
 async function idwallScreenPEP() {
   throw new Error('Idwall PEP screening: não implementado. Configure PEP_PROVIDER=stub para desenvolvimento.');
