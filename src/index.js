@@ -16,13 +16,27 @@ const appOrigin = new URL(APP_URL).origin;
 const altOrigin = appOrigin.includes('://www.')
   ? appOrigin.replace('://www.', '://')
   : appOrigin.replace('://', '://www.');
-const allowedOrigins = [appOrigin, altOrigin, 'http://localhost:3000', 'http://localhost:8000'];
+
+// CORS: adicionar origens permitidas (com e sem www, localhost, vercel, etc)
+const allowedOrigins = [
+  appOrigin,
+  altOrigin,
+  'https://bubuya.com.br',        // Sem www
+  'https://www.bubuya.com.br',    // Com www
+  'http://localhost:3000',
+  'http://localhost:8000'
+];
 
 app.use(cors({
   origin(origin, callback) {
-    if (!origin || allowedOrigins.includes(origin) || origin.endsWith('.vercel.app') || origin.endsWith('.github.io')) {
+    // Permitir: sem origin (requests locais), origens na lista, ou dominios conhecidos
+    if (!origin || allowedOrigins.includes(origin) ||
+        origin?.endsWith('.vercel.app') ||
+        origin?.endsWith('.github.io') ||
+        origin?.endsWith('.railway.app')) {
       return callback(null, true);
     }
+    logger.warn(`CORS bloqueado para origem: ${origin}`, { origin });
     return callback(new Error(`CORS bloqueado para a origem ${origin}`));
   },
   credentials: true
