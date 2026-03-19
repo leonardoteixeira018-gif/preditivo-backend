@@ -24,12 +24,15 @@ async function isTokenBlacklisted(token) {
 }
 
 module.exports = async (req, res, next) => {
-  const token = req.headers.authorization?.split(' ')[1];
+  const bearerToken = req.headers.authorization?.split(' ')[1];
+  const cookieToken = req.cookies?.auth_token;
+  const token = cookieToken || bearerToken;
   if (!token) return res.status(401).json({ error: 'Token required' });
   try {
     if (await isTokenBlacklisted(token)) {
       return res.status(401).json({ error: 'Token expired (logged out)' });
     }
+    req.authToken = token;
     req.user = jwt.verify(token, process.env.JWT_SECRET);
     next();
   } catch {

@@ -10,6 +10,29 @@ const { getUserAuditLogs, logUserAction } = require('../lib/user-audit');
 const speakeasy = require('speakeasy');
 const QRCode    = require('qrcode');
 
+function authCookieOptions() {
+  return {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'lax',
+    path: '/',
+    maxAge: 7 * 24 * 60 * 60 * 1000
+  };
+}
+
+function setAuthCookie(res, token) {
+  res.cookie('auth_token', token, authCookieOptions());
+}
+
+function clearAuthCookie(res) {
+  res.clearCookie('auth_token', {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'lax',
+    path: '/'
+  });
+}
+
 async function send2faCode(user) {
   return createEmailVerification({
     purpose: '2fa_login',
@@ -183,6 +206,7 @@ router.post('/register/verify', async (req, res) => {
     );
 
     const token = jwt.sign({ id: result.rows[0].id }, process.env.JWT_SECRET, { expiresIn: '7d' });
+    setAuthCookie(res, token);
     res.json({ token, user: result.rows[0] });
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
@@ -238,6 +262,7 @@ router.post('/login', async (req, res) => {
     }
 
     const token = jwt.sign({ id: user.id }, process.env.JWT_SECRET, { expiresIn: '7d' });
+    setAuthCookie(res, token);
 
     logger.info('User login successful', {
       email: normalizedEmail,
@@ -282,6 +307,7 @@ router.post('/login/2fa', async (req, res) => {
     await consumeEmailVerification({ purpose: '2fa_login', email: normalizedEmail, userId: user.id, code });
 
     const token = jwt.sign({ id: user.id }, process.env.JWT_SECRET, { expiresIn: '7d' });
+    setAuthCookie(res, token);
     res.json({
       token,
       user: {
@@ -399,10 +425,11 @@ router.patch('/profile', auth, async (req, res) => {
 
 router.post('/logout', auth, async (req, res) => {
   try {
-    const token = req.headers.authorization?.split(' ')[1];
+    const token = req.authToken;
     if (token) {
       await pool.query('INSERT INTO blacklisted_tokens (token) VALUES ($1) ON CONFLICT DO NOTHING', [token]);
     }
+    clearAuthCookie(res);
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -835,6 +862,7 @@ router.post('/2fa/validate', async (req, res) => {
     }
 
     const token = jwt.sign({ id: user.id }, process.env.JWT_SECRET, { expiresIn: '7d' });
+    setAuthCookie(res, token);
 
     logger.info('2FA validate — login successful', { userId: user.id, ip: req.ip });
 

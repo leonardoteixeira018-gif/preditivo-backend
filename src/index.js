@@ -3,6 +3,7 @@ require('dotenv').config();
 const express = require('express');
 const rateLimit = require('express-rate-limit');
 const cors = require('cors');
+const cookieParser = require('cookie-parser');
 const app = express();
 
 app.set('trust proxy', 1); // Confia no primeiro proxy (Railway/Vercel)
@@ -42,7 +43,12 @@ app.use(cors({
   credentials: true
 }));
 
-app.use(express.json());
+app.use(express.json({
+  verify(req, res, buf) {
+    req.rawBody = buf;
+  }
+}));
+app.use(cookieParser());
 app.use(requestLogger);
 
 // Limitadores de taxa

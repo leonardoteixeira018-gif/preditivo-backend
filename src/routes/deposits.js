@@ -55,15 +55,15 @@ function validateInfinitePaySignature(req) {
 
   const secret = process.env.INFINITEPAY_WEBHOOK_SECRET;
 
-  // Se não estiver configurado, loggar warning mas não rejeitar (compatibilidade)
+  // Fail-closed: webhook sem assinatura/secret não deve ser aceito
   if (!signature || !secret) {
-    console.warn('[WEBHOOK] Webhook signature validation não configurada (header ou secret ausente)');
-    return true;
+    console.warn('[SECURITY] Webhook rejeitado: assinatura/secret ausente');
+    return false;
   }
 
   try {
-    // Raw body como string (não parsed)
-    const rawBody = JSON.stringify(req.body || {});
+    // Raw body original capturado no express.json({ verify })
+    const rawBody = req.rawBody || Buffer.from(JSON.stringify(req.body || {}));
 
     // Calcular HMAC esperado (SHA256)
     const expectedSignature = crypto

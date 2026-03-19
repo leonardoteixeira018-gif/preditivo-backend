@@ -6,7 +6,7 @@
  *   GET  /suitability/status      → perfil atual, limites, expiração
  *   POST /suitability/submit      → responde o questionário e calcula o perfil
  *
- * Admin (requer x-admin-secret):
+ * Admin (requer Bearer JWT admin):
  *   GET  /suitability/admin/stats → resumo de perfis de todos os usuários
  *   POST /suitability/admin/:userId/override → sobrescreve perfil manualmente
  */
@@ -22,7 +22,7 @@ const {
   calculateProfile,
   calcExpiresAt,
 } = require('../lib/suitability');
-const adminAuth = require('../middleware/adminAuth'); // suporta JWT Bearer e x-admin-secret
+const adminAuth = require('../middleware/adminAuth'); // JWT Bearer admin obrigatório
 
 // ── Rotas de usuário ──────────────────────────────────────────────────────────
 

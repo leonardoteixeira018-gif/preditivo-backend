@@ -3,11 +3,11 @@ const crypto = require('crypto');
 const pool = require('../lib/db');
 
 function verifySignature(body, signature) {
-  if (!process.env.TRANSAK_SECRET_KEY || !signature) return true;
+  if (!process.env.TRANSAK_SECRET_KEY || !signature) return false;
 
   const computed = crypto
     .createHmac('sha256', process.env.TRANSAK_SECRET_KEY)
-    .update(JSON.stringify(body))
+    .update(body)
     .digest('hex');
 
   return computed === signature;
@@ -18,7 +18,8 @@ router.post('/webhook', async (req, res) => {
 
   try {
     const signature = req.headers['x-transak-signature'];
-    if (!verifySignature(req.body, signature)) {
+    const rawBody = req.rawBody || Buffer.from(JSON.stringify(req.body || {}));
+    if (!verifySignature(rawBody, signature)) {
       console.error('Transak: assinatura invalida');
       return res.status(401).json({ error: 'Invalid signature' });
     }

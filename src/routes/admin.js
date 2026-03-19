@@ -1655,22 +1655,45 @@ router.patch('/users/:userId/compliance', async (req, res) => {
   const { userId } = req.params;
   const { admin_notes, risk_level, pep_status, kyc_status, kyc_rejection_reason } = req.body;
 
-  const updates = ['last_reviewed_at = NOW()', 'reviewed_by = $1'];
-  const values = ['admin'];
-  let idx = 3;
-
-  if (admin_notes !== undefined) { updates.push(`admin_notes = $${idx++}`); values.push(admin_notes); }
-  if (risk_level !== undefined)  { updates.push(`risk_level = $${idx++}`);  values.push(risk_level); }
-  if (pep_status !== undefined)  { updates.push(`pep_status = $${idx++}`);  values.push(pep_status); }
-  if (kyc_status !== undefined)  { updates.push(`kyc_status = $${idx++}`);  values.push(kyc_status); }
-  if (kyc_rejection_reason !== undefined) { updates.push(`kyc_rejection_reason = $${idx++}`); values.push(kyc_rejection_reason); }
-
-  values.splice(1, 0, userId); // $2 = userId
-
   try {
+    const currentResult = await pool.query(
+      `SELECT admin_notes, risk_level, pep_status, kyc_status, kyc_rejection_reason
+       FROM users
+       WHERE id = $1`,
+      [userId]
+    );
+    if (!currentResult.rows.length) {
+      return res.status(404).json({ error: 'Usuário não encontrado' });
+    }
+    const current = currentResult.rows[0];
+
+    const nextValues = {
+      admin_notes: admin_notes !== undefined ? admin_notes : current.admin_notes,
+      risk_level: risk_level !== undefined ? risk_level : current.risk_level,
+      pep_status: pep_status !== undefined ? pep_status : current.pep_status,
+      kyc_status: kyc_status !== undefined ? kyc_status : current.kyc_status,
+      kyc_rejection_reason: kyc_rejection_reason !== undefined ? kyc_rejection_reason : current.kyc_rejection_reason
+    };
+
     await pool.query(
-      `UPDATE users SET ${updates.join(', ')} WHERE id = $2`,
-      values
+      `UPDATE users
+       SET last_reviewed_at = NOW(),
+           reviewed_by = $1,
+           admin_notes = $2,
+           risk_level = $3,
+           pep_status = $4,
+           kyc_status = $5,
+           kyc_rejection_reason = $6
+       WHERE id = $7`,
+      [
+        'admin',
+        nextValues.admin_notes,
+        nextValues.risk_level,
+        nextValues.pep_status,
+        nextValues.kyc_status,
+        nextValues.kyc_rejection_reason,
+        userId
+      ]
     );
     logger.info('User compliance updated', { userId, updates: Object.keys(req.body) });
     res.json({ ok: true });
@@ -1714,37 +1737,26 @@ router.delete('/users/:userId', async (req, res) => {
 
     // Excluir tabelas filhas — baseado nas tabelas reais do banco
     // Todas têm ON DELETE CASCADE mas listamos explicitamente por segurança
-    const tables = [
-      'kyc_reviews',
-      'pep_reviews',
-      'coaf_flags',
-      'suitability_responses',
-      'email_verifications',
-      'market_comments',
-      'bets',
-      'deposits',
-      'withdrawals',
-    ];
-
-    for (const table of tables) {
-      await client.query(`DELETE FROM ${table} WHERE user_id = $1`, [userId]);
-    }
+    await client.query('DELETE FROM kyc_reviews WHERE user_id = $1', [userId]);
+    await client.query('DELETE FROM pep_reviews WHERE user_id = $1', [userId]);
+    await client.query('DELETE FROM coaf_flags WHERE user_id = $1', [userId]);
+    await client.query('DELETE FROM suitability_responses WHERE user_id = $1', [userId]);
+    await client.query('DELETE FROM email_verifications WHERE user_id = $1', [userId]);
+    await client.query('DELETE FROM market_comments WHERE user_id = $1', [userId]);
+    await client.query('DELETE FROM bets WHERE user_id = $1', [userId]);
+    await client.query('DELETE FROM deposits WHERE user_id = $1', [userId]);
+    await client.query('DELETE FROM withdrawals WHERE user_id = $1', [userId]);
 
     // referral_bonuses tem duas FKs para users (referrer_id e referred_id)
     await client.query('DELETE FROM referral_bonuses WHERE referrer_id = $1 OR referred_id = $1', [userId]);
 
     // Tabelas opcionais com user_id — deletar com .catch() pois podem não existir em todos ambientes
-    const optionalTables = [
-      'push_subscriptions',
-      'notifications',
-      'user_audit_logs',
-      'audit_logs',
-      'bonus_transactions',
-      'risk_term_acceptances',
-    ];
-    for (const table of optionalTables) {
-      await client.query(`DELETE FROM ${table} WHERE user_id = $1`, [userId]).catch(() => {});
-    }
+    await client.query('DELETE FROM push_subscriptions WHERE user_id = $1', [userId]).catch(() => {});
+    await client.query('DELETE FROM notifications WHERE user_id = $1', [userId]).catch(() => {});
+    await client.query('DELETE FROM user_audit_logs WHERE user_id = $1', [userId]).catch(() => {});
+    await client.query('DELETE FROM audit_logs WHERE user_id = $1', [userId]).catch(() => {});
+    await client.query('DELETE FROM bonus_transactions WHERE user_id = $1', [userId]).catch(() => {});
+    await client.query('DELETE FROM risk_term_acceptances WHERE user_id = $1', [userId]).catch(() => {});
     // blacklisted_tokens não tem user_id (apenas token + expired_at) — ignorar
 
     // Deletar o usuário

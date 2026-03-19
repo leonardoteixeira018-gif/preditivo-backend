@@ -113,15 +113,15 @@ async function getSessionDecision(sessionId) {
 
 /**
  * Verifica a assinatura HMAC do webhook do Didit.
- * Retorna true se válida (ou se DIDIT_WEBHOOK_SECRET não estiver configurado).
+ * Retorna true se válida.
  */
 function verifyWebhookSignature(rawBody, signature, timestamp) {
   const secret = process.env.DIDIT_WEBHOOK_SECRET;
 
-  // Se não configurado, aceitar (sem validação)
+  // Fail-closed: segredo ausente invalida webhook
   if (!secret) {
-    logger.warn('[DIDIT] DIDIT_WEBHOOK_SECRET não configurado — webhook aceito sem validação');
-    return true;
+    logger.error('[DIDIT] DIDIT_WEBHOOK_SECRET não configurado — webhook rejeitado');
+    return false;
   }
 
   // Verificar timestamp (janela de 5 minutos)

@@ -1,11 +1,7 @@
-const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
 
 module.exports = (req, res, next) => {
-  // Opção 1: Header x-admin-secret (legado)
-  const secretHeader = req.headers['x-admin-secret'];
-
-  // Opção 2: JWT Bearer token (novo - recomendado)
+  // Apenas JWT Bearer token para acesso admin
   const authHeader = req.headers['authorization'];
 
   // Tentar validar JWT primeiro (novo sistema)
@@ -28,38 +24,7 @@ module.exports = (req, res, next) => {
     }
   }
 
-  // Fallback: validar secret direto (compatibilidade com frontend antigo)
-  if (secretHeader) {
-    const expectedSecret = process.env.ADMIN_SECRET;
-
-    if (!expectedSecret) {
-      console.error('[SECURITY] ADMIN_SECRET não configurado no .env');
-      return res.status(500).json({ error: 'Erro de configuração do servidor' });
-    }
-
-    try {
-      // Comparação segura contra timing attacks
-      const valid = crypto.timingSafeEqual(
-        Buffer.from(secretHeader),
-        Buffer.from(expectedSecret)
-      );
-
-      if (!valid) {
-        console.warn(`[SECURITY] Invalid admin secret attempt from ${req.ip}`);
-        return res.status(403).json({ error: 'Admin secret inválida' });
-      }
-    } catch (err) {
-      // Tamanhos diferentes
-      console.warn(`[SECURITY] Admin secret length mismatch from ${req.ip}`);
-      return res.status(403).json({ error: 'Admin secret inválida' });
-    }
-
-    console.log(`[AUDIT] Admin action (legacy) from ${req.ip} - ${req.method} ${req.path}`);
-    next();
-    return;
-  }
-
   // Nenhuma credencial válida
   console.warn(`[SECURITY] Admin access attempt without credentials from ${req.ip}`);
-  return res.status(401).json({ error: 'Credenciais de admin obrigatórias' });
+  return res.status(401).json({ error: 'Bearer token de admin obrigatório' });
 };

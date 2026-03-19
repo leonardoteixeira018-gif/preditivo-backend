@@ -22,7 +22,7 @@ const { logUserAction } = require('../lib/user-audit');
 const { validateCPF, maskCPF, KYC_STATUS } = require('../lib/kyc');
 const { verifyCPF, verifyDocument } = require('../lib/kyc-bureau');
 const { runFullScreening } = require('../lib/pep-screening');
-const adminAuth = require('../middleware/adminAuth'); // suporta JWT Bearer e x-admin-secret
+const adminAuth = require('../middleware/adminAuth'); // JWT Bearer admin obrigatório
 const { createDiditSession, getSessionDecision, verifyWebhookSignature, mapDiditStatus } = require('../lib/didit-bureau');
 const { APP_URL } = require('../lib/appConfig');
 
