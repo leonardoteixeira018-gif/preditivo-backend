@@ -93,6 +93,37 @@ const webhookLimiter = rateLimit({
   message: { error: 'Webhook rate limit exceeded' }
 });
 
+// betUserLimiter: limita apostas por usuário (não por IP) — previne abuso
+// O keyGenerator usa user_id do JWT se disponível, caso contrário usa IP
+const betUserLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minuto
+  max: 10,             // 10 apostas/min por usuário
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => req.user?.id || req.ip,
+  message: { error: 'Muitas apostas em pouco tempo. Aguarde 1 minuto.' }
+});
+
+// withdrawalUserLimiter: limita saques por usuário
+const withdrawalUserLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minuto
+  max: 5,              // 5 req/min por usuário
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => req.user?.id || req.ip,
+  message: { error: 'Muitas requisições de saque. Aguarde 1 minuto.' }
+});
+
+// depositUserLimiter: limita checkouts por usuário
+const depositUserLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minuto
+  max: 5,              // 5 req/min por usuário
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => req.user?.id || req.ip,
+  message: { error: 'Muitas requisições de depósito. Aguarde 1 minuto.' }
+});
+
 // Limitadores de auth
 app.use('/auth/login', authLimiter);
 app.use('/auth/register', authLimiter);
@@ -109,6 +140,11 @@ app.use('/admin', require('./routes/admin'));
 
 // Webhook: limiter específico
 app.use('/deposits/infinitepay/webhook', webhookLimiter);
+
+// Rate limiters por usuário para rotas autenticadas críticas
+app.use('/bets', betUserLimiter);
+app.use('/withdrawals', withdrawalUserLimiter);
+app.use('/deposits/infinitepay/checkout', depositUserLimiter);
 
 // General limiter para todas as demais rotas (não afeta /admin)
 app.use(generalLimiter);

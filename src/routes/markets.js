@@ -6,18 +6,31 @@ const { APP_URL, APP_BRAND, ADMIN_EMAIL } = require('../lib/appConfig');
 const cache = require('../lib/cache');
 
 const CACHE_KEY_LIST = 'markets:list';
+const CACHE_KEY_STATS = 'markets:stats';
 
 router.get('/stats', async (req, res) => {
   try {
-    const volQ = await pool.query('SELECT COALESCE(SUM(amount), 0) AS total_volume FROM bets');
-    const marketsQ = await pool.query('SELECT COUNT(*) AS total FROM markets WHERE resolved_at IS NULL');
-    const tradersQ = await pool.query('SELECT COUNT(DISTINCT user_id) AS total FROM bets WHERE status = $1', ['open']);
+    const cached = cache.get(CACHE_KEY_STATS);
+    if (cached) return res.json(cached);
 
-    res.json({
-      total_volume: parseFloat(volQ.rows[0].total_volume),
-      active_markets: parseInt(marketsQ.rows[0].total, 10),
-      active_traders: parseInt(tradersQ.rows[0].total, 10)
-    });
+    // Single CTE query instead of 3 separate queries
+    const result = await pool.query(`
+      WITH
+        vol     AS (SELECT COALESCE(SUM(amount), 0) AS total_volume FROM bets),
+        mkt     AS (SELECT COUNT(*) AS active_markets FROM markets WHERE resolved_at IS NULL AND status = 'open'),
+        traders AS (SELECT COUNT(DISTINCT user_id) AS active_traders FROM bets WHERE status = 'open')
+      SELECT vol.total_volume, mkt.active_markets, traders.active_traders
+      FROM vol, mkt, traders
+    `);
+
+    const stats = {
+      total_volume: parseFloat(result.rows[0].total_volume),
+      active_markets: parseInt(result.rows[0].active_markets, 10),
+      active_traders: parseInt(result.rows[0].active_traders, 10)
+    };
+
+    cache.set(CACHE_KEY_STATS, stats, 60_000); // 60s TTL
+    res.json(stats);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -25,12 +38,53 @@ router.get('/stats', async (req, res) => {
 
 router.get('/', async (req, res) => {
   try {
-    const cached = cache.get(CACHE_KEY_LIST);
+    const limit = req.query.limit ? Math.min(parseInt(req.query.limit, 10) || 20, 100) : null;
+    const offset = parseInt(req.query.offset, 10) || 0;
+    const category = req.query.category || null;
+
+    // Cache key inclui parâmetros para suportar paginação
+    const cacheKey = limit
+      ? `${CACHE_KEY_LIST}:${category || 'all'}:${limit}:${offset}`
+      : `${CACHE_KEY_LIST}:${category || 'all'}:all`;
+
+    const cached = cache.get(cacheKey);
     if (cached) return res.json(cached);
 
-    const result = await pool.query('SELECT * FROM markets ORDER BY created_at DESC');
-    cache.set(CACHE_KEY_LIST, result.rows, 30_000); // TTL 30s
-    res.json(result.rows);
+    let query, params;
+    if (limit !== null) {
+      query = `
+        SELECT *, COUNT(*) OVER() AS total_count
+        FROM markets
+        WHERE ($1::text IS NULL OR category = $1)
+        ORDER BY created_at DESC
+        LIMIT $2 OFFSET $3
+      `;
+      params = [category, limit, offset];
+    } else {
+      query = `
+        SELECT * FROM markets
+        WHERE ($1::text IS NULL OR category = $1)
+        ORDER BY created_at DESC
+      `;
+      params = [category];
+    }
+
+    const result = await pool.query(query, params);
+
+    let response;
+    if (limit !== null) {
+      response = {
+        markets: result.rows.map(r => { const { total_count, ...m } = r; return m; }),
+        total: parseInt(result.rows[0]?.total_count || 0, 10),
+        limit,
+        offset
+      };
+    } else {
+      response = result.rows;
+    }
+
+    cache.set(cacheKey, response, 30_000); // TTL 30s
+    res.json(response);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -38,22 +92,30 @@ router.get('/', async (req, res) => {
 
 router.get('/:id', async (req, res) => {
   try {
-    const market = await pool.query(
-      `SELECT m.*,
-        (SELECT COUNT(DISTINCT user_id) FROM bets WHERE market_id = m.id) AS bettors_count
-       FROM markets m WHERE m.id = $1`,
-      [req.params.id]
-    );
+    const cacheKey = `market:${req.params.id}`;
+    const cached = cache.get(cacheKey);
+    if (cached) return res.json(cached);
+
+    const [market, history] = await Promise.all([
+      pool.query(
+        `SELECT m.*,
+          (SELECT COUNT(DISTINCT user_id) FROM bets WHERE market_id = m.id) AS bettors_count
+         FROM markets m WHERE m.id = $1`,
+        [req.params.id]
+      ),
+      pool.query(
+        'SELECT prob_yes, prob_no, volume, created_at FROM market_history WHERE market_id = $1 ORDER BY created_at ASC',
+        [req.params.id]
+      )
+    ]);
+
     if (!market.rows.length) {
       return res.status(404).json({ error: 'Mercado nao encontrado' });
     }
 
-    const history = await pool.query(
-      'SELECT prob_yes, prob_no, volume, created_at FROM market_history WHERE market_id = $1 ORDER BY created_at ASC',
-      [req.params.id]
-    );
-
-    res.json({ ...market.rows[0], history: history.rows });
+    const response = { ...market.rows[0], history: history.rows };
+    cache.set(cacheKey, response, 30_000); // 30s TTL
+    res.json(response);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -85,6 +147,8 @@ router.patch('/:id/description', adminAuth, async (req, res) => {
   try {
     const { description } = req.body;
     await pool.query('UPDATE markets SET description = $1 WHERE id = $2', [description, req.params.id]);
+    cache.del(`market:${req.params.id}`);
+    cache.del(CACHE_KEY_LIST);
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -95,6 +159,8 @@ router.patch('/:id/image', adminAuth, async (req, res) => {
   try {
     const { image_url } = req.body;
     await pool.query('UPDATE markets SET image_url = $1 WHERE id = $2', [image_url, req.params.id]);
+    cache.del(`market:${req.params.id}`);
+    cache.del(CACHE_KEY_LIST);
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -162,6 +228,8 @@ router.post('/:id/resolve', adminAuth, async (req, res) => {
 
     // Invalida caches após commit
     cache.del(CACHE_KEY_LIST);
+    cache.del(CACHE_KEY_STATS);
+    cache.del(`market:${m.id}`);
     cache.del('ranking:list');
 
     // Envia emails fora da transação (não bloqueia o commit em caso de falha)
