@@ -31,6 +31,15 @@ const PROVIDER = process.env.BUREAU_PROVIDER || 'stub';
 
 // ── STUB (desenvolvimento / sandbox CVM) ────────────────────────────────────
 
+// CPFs de teste especiais para o Sandbox
+const STUB_TEST_CPFS = {
+  '00000000272': { status: 'rejected', rejectionReason: 'cpf_situacao_3', label: 'CPF cancelado (teste)' },
+  '00000000191': { status: 'rejected', rejectionReason: 'cpf_situacao_3', label: 'CPF cancelado (teste)' },
+};
+
+// Nome que contém "DIVERGENTE" aciona mismatch de nome no stub
+const STUB_MISMATCH_MARKER = 'DIVERGENTE';
+
 async function stubVerifyCPF({ cpf, fullName, dateOfBirth }) {
   // Simula latência de bureau real
   await new Promise(resolve => setTimeout(resolve, 300));
@@ -40,7 +49,34 @@ async function stubVerifyCPF({ cpf, fullName, dateOfBirth }) {
     provider: 'stub'
   });
 
-  // Em stub, qualquer CPF válido passa
+  // CPFs especiais de teste
+  const testCase = STUB_TEST_CPFS[cpf];
+  if (testCase) {
+    return {
+      ok: true,
+      provider: 'stub',
+      providerId: `stub_${Date.now()}`,
+      status: 'rejected',
+      rejectionReason: testCase.rejectionReason,
+      rawResponse: { mode: 'development', testCase: testCase.label }
+    };
+  }
+
+  // Nome com marcador "DIVERGENTE" simula mismatch de nome
+  const nameNorm = String(fullName || '').toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  if (nameNorm.includes(STUB_MISMATCH_MARKER)) {
+    return {
+      ok: true,
+      provider: 'stub',
+      providerId: `stub_${Date.now()}`,
+      status: 'rejected',
+      rejectionReason: 'name_mismatch',
+      nameFromBureau: 'TITULAR DO CPF (SIMULADO)',
+      rawResponse: { mode: 'development', testCase: 'name_mismatch_simulation' }
+    };
+  }
+
+  // Em stub, qualquer outro CPF válido passa
   return {
     ok: true,
     provider: 'stub',
