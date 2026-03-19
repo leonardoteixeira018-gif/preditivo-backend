@@ -1665,6 +1665,48 @@ router.patch('/users/:userId/compliance', async (req, res) => {
   }
 });
 
+/**
+ * DELETE /admin/users/:userId
+ * Exclui uma conta de usuário completamente (para fins de teste/recadastro).
+ * Protegido por adminAuth — apenas administradores podem usar.
+ */
+router.delete('/users/:userId', async (req, res) => {
+  const { userId } = req.params;
+  try {
+    // Verificar se usuário existe e não tem saldo real
+    const check = await pool.query(
+      'SELECT username, email, balance FROM users WHERE id = $1',
+      [userId]
+    );
+    if (!check.rows.length) {
+      return res.status(404).json({ error: 'Usuário não encontrado' });
+    }
+    const u = check.rows[0];
+    if (parseFloat(u.balance) > 0) {
+      return res.status(400).json({
+        error: `Usuário tem saldo de R$${parseFloat(u.balance).toFixed(2)}. Zere o saldo antes de excluir.`
+      });
+    }
+
+    // Excluir dados relacionados em cascata
+    await pool.query('DELETE FROM kyc_reviews WHERE user_id = $1', [userId]);
+    await pool.query('DELETE FROM pep_reviews WHERE user_id = $1', [userId]);
+    await pool.query('DELETE FROM coaf_flags WHERE user_id = $1', [userId]);
+    await pool.query('DELETE FROM suitability_responses WHERE user_id = $1', [userId]);
+    await pool.query('DELETE FROM push_subscriptions WHERE user_id = $1', [userId]);
+    await pool.query('DELETE FROM user_audit_log WHERE user_id = $1', [userId]);
+    await pool.query('DELETE FROM bets WHERE user_id = $1', [userId]);
+    await pool.query('DELETE FROM transactions WHERE user_id = $1', [userId]);
+    await pool.query('DELETE FROM users WHERE id = $1', [userId]);
+
+    logger.warn('User account deleted by admin', { userId, username: u.username, email: u.email });
+    res.json({ ok: true, message: `Conta "${u.username}" (${u.email}) excluída com sucesso.` });
+  } catch (err) {
+    logger.error('User delete error', { userId, error: err.message });
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ── SANDBOX DE TESTES ─────────────────────────────────────────────────────────
 
 /**
