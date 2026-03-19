@@ -1544,6 +1544,99 @@ router.post('/bots/reload-balances', async (req, res) => {
   }
 });
 
+// ── USER COMPLIANCE DETAIL ────────────────────────────────────────────────────
+
+/**
+ * GET /admin/users/:userId/compliance
+ * Retorna todos os dados de compliance de um usuário para o painel admin.
+ */
+router.get('/users/:userId/compliance', async (req, res) => {
+  const { userId } = req.params;
+  try {
+    const [userRes, kycRes, pepRes, coafRes, suitRes] = await Promise.all([
+      pool.query(`
+        SELECT
+          u.id, u.username, u.email, u.full_name, u.cpf,
+          u.date_of_birth, u.balance, u.created_at, u.role,
+          u.kyc_status, u.kyc_submitted_at, u.kyc_approved_at,
+          u.kyc_rejected_at, u.kyc_rejection_reason, u.kyc_provider_id,
+          u.pep_status, u.pep_checked_at,
+          u.sanctions_status, u.sanctions_checked_at,
+          u.suitability_profile, u.suitability_score,
+          u.suitability_completed_at, u.suitability_expires_at,
+          u.admin_notes, u.risk_level, u.last_reviewed_at, u.reviewed_by
+        FROM users u WHERE u.id = $1
+      `, [userId]),
+      pool.query(
+        `SELECT * FROM kyc_reviews WHERE user_id = $1 ORDER BY created_at DESC LIMIT 20`,
+        [userId]
+      ),
+      pool.query(
+        `SELECT * FROM pep_reviews WHERE user_id = $1 ORDER BY created_at DESC LIMIT 10`,
+        [userId]
+      ),
+      pool.query(
+        `SELECT * FROM coaf_flags WHERE user_id = $1 ORDER BY created_at DESC`,
+        [userId]
+      ),
+      pool.query(
+        `SELECT id, profile, score, answers, completed_at, expires_at, overridden_by
+         FROM suitability_responses WHERE user_id = $1 ORDER BY completed_at DESC LIMIT 5`,
+        [userId]
+      )
+    ]);
+
+    if (!userRes.rows.length) {
+      return res.status(404).json({ error: 'Usuário não encontrado' });
+    }
+
+    res.json({
+      ok: true,
+      user: userRes.rows[0],
+      kyc_reviews: kycRes.rows,
+      pep_reviews: pepRes.rows,
+      coaf_flags: coafRes.rows,
+      suitability_history: suitRes.rows
+    });
+  } catch (err) {
+    logger.error('User compliance detail error', { userId, error: err.message });
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * PATCH /admin/users/:userId/compliance
+ * Atualiza notas internas, nível de risco e overrides de compliance.
+ */
+router.patch('/users/:userId/compliance', async (req, res) => {
+  const { userId } = req.params;
+  const { admin_notes, risk_level, pep_status, kyc_status, kyc_rejection_reason } = req.body;
+
+  const updates = ['last_reviewed_at = NOW()', 'reviewed_by = $1'];
+  const values = ['admin'];
+  let idx = 3;
+
+  if (admin_notes !== undefined) { updates.push(`admin_notes = $${idx++}`); values.push(admin_notes); }
+  if (risk_level !== undefined)  { updates.push(`risk_level = $${idx++}`);  values.push(risk_level); }
+  if (pep_status !== undefined)  { updates.push(`pep_status = $${idx++}`);  values.push(pep_status); }
+  if (kyc_status !== undefined)  { updates.push(`kyc_status = $${idx++}`);  values.push(kyc_status); }
+  if (kyc_rejection_reason !== undefined) { updates.push(`kyc_rejection_reason = $${idx++}`); values.push(kyc_rejection_reason); }
+
+  values.splice(1, 0, userId); // $2 = userId
+
+  try {
+    await pool.query(
+      `UPDATE users SET ${updates.join(', ')} WHERE id = $2`,
+      values
+    );
+    logger.info('User compliance updated', { userId, updates: Object.keys(req.body) });
+    res.json({ ok: true });
+  } catch (err) {
+    logger.error('User compliance update error', { userId, error: err.message });
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Exporta runBotRound para uso no cron do servidor
 module.exports = router;
 module.exports.runBotRound = runBotRound;
