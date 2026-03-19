@@ -71,11 +71,20 @@ async function createDiditSession({ userId, fullName, cpf, dateOfBirth, callback
   }
 
   const data = await res.json();
+  // Log completo para diagnóstico (sem dados sensíveis)
   logger.info('[DIDIT] Sessão criada com sucesso', {
     userId,
-    sessionId: data.session_id,
-    status:    data.status,
+    sessionId:        data.session_id,
+    status:           data.status,
+    url:              data.url,
+    verification_url: data.verification_url,
+    allKeys:          Object.keys(data),
   });
+
+  // Normalizar: Didit v3 retorna "url", versões anteriores retornavam "verification_url"
+  if (data.url && !data.verification_url) {
+    data.verification_url = data.url;
+  }
 
   return data;
 }
