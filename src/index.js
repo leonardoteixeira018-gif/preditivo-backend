@@ -448,6 +448,60 @@ app.listen(PORT, async () => {
   `).catch(()=>{});
   await pool.query("CREATE INDEX IF NOT EXISTS idx_data_deletion_user ON data_deletion_requests(user_id)").catch(()=>{});
 
+  // ── A: Ouvidoria / Canal de Reclamações ──────────────────────────────────
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS complaints (
+      id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id      UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      category     VARCHAR(50) NOT NULL,
+      description  TEXT NOT NULL,
+      status       VARCHAR(20) NOT NULL DEFAULT 'open',
+      admin_response TEXT,
+      responded_at TIMESTAMPTZ,
+      responded_by TEXT,
+      created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `).catch(()=>{});
+  await pool.query("CREATE INDEX IF NOT EXISTS idx_complaints_user ON complaints(user_id, created_at DESC)").catch(()=>{});
+  await pool.query("CREATE INDEX IF NOT EXISTS idx_complaints_status ON complaints(status, created_at DESC)").catch(()=>{});
+
+  // ── B: Configuração de limites operacionais ──────────────────────────────
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS platform_config (
+      key        VARCHAR(100) PRIMARY KEY,
+      value      JSONB NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_by TEXT
+    )
+  `).catch(()=>{});
+  // Seed dos limites padrão — ON CONFLICT DO NOTHING para não sobrescrever o que o admin já salvou
+  await pool.query(`
+    INSERT INTO platform_config (key, value) VALUES
+      ('limits_conservador', '{"max_bet_single":100,"max_month_total":500,"max_market_total":100}'),
+      ('limits_moderado',    '{"max_bet_single":500,"max_month_total":2000,"max_market_total":500}'),
+      ('limits_arrojado',    '{"max_bet_single":2000,"max_month_total":10000,"max_market_total":2000}')
+    ON CONFLICT (key) DO NOTHING
+  `).catch(()=>{});
+
+  // ── C: Auditoria de ações admin ───────────────────────────────────────────
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS admin_audit_logs (
+      id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      admin_user  TEXT NOT NULL DEFAULT 'admin',
+      action      VARCHAR(100) NOT NULL,
+      entity_type VARCHAR(50),
+      entity_id   TEXT,
+      details     JSONB,
+      ip          TEXT,
+      created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `).catch(()=>{});
+  await pool.query("CREATE INDEX IF NOT EXISTS idx_admin_audit_created ON admin_audit_logs(created_at DESC)").catch(()=>{});
+
+  // Carrega limites do banco no cache em memória
+  const configCache = require('./lib/configCache');
+  await configCache.loadFromDB();
+
   // Auto-fechar mercados expirados a cada 5 minutos
   const { closeExpiredMarkets } = require('./routes/markets');
   setInterval(() => closeExpiredMarkets().catch(err =>

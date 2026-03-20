@@ -9,6 +9,8 @@ const { validateCPF } = require('../lib/kyc');
 const { verifyCPF } = require('../lib/kyc-bureau');
 const { runFullScreening, screenPEP, screenSanctions } = require('../lib/pep-screening');
 const { validateAnswers, calculateProfile, calcExpiresAt } = require('../lib/suitability');
+const { logAdminAction } = require('../lib/adminAudit');
+const configCache = require('../lib/configCache');
 
 router.use(adminAuth);
 
@@ -942,6 +944,15 @@ router.post('/markets/:id/resolve', async (req, res) => {
       ip: req.ip
     });
 
+    // Audit trail
+    await logAdminAction('admin', 'resolve_market', 'market', req.params.id, {
+      title: m.title,
+      outcome,
+      winners: wonResult.rows.length,
+      losers: lostResult.rows.length,
+      source_url: req.body.source_url || null,
+    }, req.ip);
+
     // Invalida cache após commit
     cache.del('markets:list');
     cache.del('ranking:list');
@@ -1708,6 +1719,12 @@ router.patch('/users/:userId/compliance', async (req, res) => {
         userId
       ]
     );
+    await logAdminAction('admin', 'compliance_update', 'user', userId, {
+      changes: Object.keys(req.body),
+      old: current,
+      new: nextValues,
+    }, req.ip);
+
     logger.info('User compliance updated', { userId, updates: Object.keys(req.body) });
     res.json({ ok: true });
   } catch (err) {
@@ -2388,6 +2405,125 @@ router.get('/sandbox/users', async (req, res) => {
       LIMIT 100
     `);
     res.json({ ok: true, users: result.rows });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── A: OUVIDORIA — ADMIN ──────────────────────────────────────────────────────
+
+/** GET /admin/complaints — lista todas as reclamações */
+router.get('/complaints', async (req, res) => {
+  const { status } = req.query;
+  const where = status ? `WHERE c.status = $1` : '';
+  const params = status ? [status] : [];
+  try {
+    const result = await pool.query(`
+      SELECT c.id, c.category, c.description, c.status,
+             c.admin_response, c.responded_at, c.responded_by, c.created_at,
+             u.username, u.email
+      FROM complaints c
+      JOIN users u ON u.id = c.user_id
+      ${where}
+      ORDER BY c.created_at DESC
+    `, params);
+    res.json({ ok: true, complaints: result.rows });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/** PATCH /admin/complaints/:id — responde e resolve uma reclamação */
+router.patch('/complaints/:id', async (req, res) => {
+  const { id } = req.params;
+  const { status, admin_response } = req.body;
+  const VALID_STATUS = ['open', 'in_progress', 'resolved', 'rejected'];
+  if (status && !VALID_STATUS.includes(status)) {
+    return res.status(400).json({ error: 'Status inválido', valid: VALID_STATUS });
+  }
+  try {
+    const prev = await pool.query('SELECT * FROM complaints WHERE id = $1', [id]);
+    if (!prev.rows.length) return res.status(404).json({ error: 'Reclamação não encontrada' });
+
+    const result = await pool.query(`
+      UPDATE complaints SET
+        status        = COALESCE($1, status),
+        admin_response = COALESCE($2, admin_response),
+        responded_at  = CASE WHEN $2 IS NOT NULL THEN NOW() ELSE responded_at END,
+        responded_by  = CASE WHEN $2 IS NOT NULL THEN 'admin' ELSE responded_by END
+      WHERE id = $3
+      RETURNING *
+    `, [status || null, admin_response || null, id]);
+
+    await logAdminAction('admin', 'complaint_update', 'complaint', id,
+      { old_status: prev.rows[0].status, new_status: status, has_response: !!admin_response }, req.ip);
+
+    res.json({ ok: true, complaint: result.rows[0] });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── B: LIMITES OPERACIONAIS CONFIGURÁVEIS ─────────────────────────────────────
+
+/** GET /admin/config/limits — retorna limites atuais */
+router.get('/config/limits', async (req, res) => {
+  res.json({ ok: true, limits: configCache.getAllLimits() });
+});
+
+/** PATCH /admin/config/limits — atualiza limites de um perfil */
+router.patch('/config/limits', async (req, res) => {
+  const { profile, max_bet_single, max_month_total, max_market_total } = req.body;
+  const VALID_PROFILES = ['conservador', 'moderado', 'arrojado'];
+  if (!VALID_PROFILES.includes(profile)) {
+    return res.status(400).json({ error: 'Perfil inválido', valid: VALID_PROFILES });
+  }
+  const newLimits = {};
+  if (max_bet_single   !== undefined) newLimits.max_bet_single   = parseFloat(max_bet_single);
+  if (max_month_total  !== undefined) newLimits.max_month_total  = parseFloat(max_month_total);
+  if (max_market_total !== undefined) newLimits.max_market_total = parseFloat(max_market_total);
+
+  for (const [k, v] of Object.entries(newLimits)) {
+    if (isNaN(v) || v < 0) return res.status(400).json({ error: `Valor inválido para ${k}` });
+  }
+
+  try {
+    const merged = { ...configCache.getLimits(profile), ...newLimits };
+    await pool.query(`
+      INSERT INTO platform_config (key, value, updated_at, updated_by)
+      VALUES ($1, $2, NOW(), 'admin')
+      ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = NOW(), updated_by = 'admin'
+    `, [`limits_${profile}`, JSON.stringify(merged)]);
+
+    configCache.setLimits(profile, merged);
+
+    await logAdminAction('admin', 'update_limits', 'config', `limits_${profile}`,
+      { profile, old: configCache.getLimits(profile), new: merged }, req.ip);
+
+    logger.info('Limites operacionais atualizados', { profile, merged });
+    res.json({ ok: true, profile, limits: merged, all: configCache.getAllLimits() });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── C: AUDITORIA DE AÇÕES ADMIN ───────────────────────────────────────────────
+
+/** GET /admin/audit-logs — lista o histórico de ações administrativas */
+router.get('/audit-logs', async (req, res) => {
+  const limit = Math.min(parseInt(req.query.limit || '100'), 500);
+  const action = req.query.action || null;
+  const entity = req.query.entity_type || null;
+  try {
+    const result = await pool.query(`
+      SELECT id, admin_user, action, entity_type, entity_id, details, ip, created_at
+      FROM admin_audit_logs
+      WHERE ($1::text IS NULL OR action = $1)
+        AND ($2::text IS NULL OR entity_type = $2)
+      ORDER BY created_at DESC
+      LIMIT $3
+    `, [action, entity, limit]);
+    res.json({ ok: true, logs: result.rows });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

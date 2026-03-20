@@ -979,4 +979,55 @@ router.get('/self-exclusion-status', auth, async (req, res) => {
   }
 });
 
+// ── A: OUVIDORIA / CANAL DE RECLAMAÇÕES ───────────────────────────────────────
+
+const COMPLAINT_CATEGORIES = ['resolucao_mercado', 'kyc_bloqueio', 'saque_bloqueado', 'suitability', 'privacidade', 'outro'];
+
+/**
+ * POST /auth/complaints
+ * Usuário abre uma reclamação formal.
+ */
+router.post('/complaints', auth, async (req, res) => {
+  const { category, description } = req.body;
+  if (!category || !COMPLAINT_CATEGORIES.includes(category)) {
+    return res.status(400).json({ error: 'Categoria inválida', valid: COMPLAINT_CATEGORIES });
+  }
+  if (!description || description.trim().length < 20) {
+    return res.status(400).json({ error: 'Descrição muito curta (mínimo 20 caracteres)' });
+  }
+  if (description.length > 2000) {
+    return res.status(400).json({ error: 'Descrição muito longa (máximo 2000 caracteres)' });
+  }
+  try {
+    const result = await pool.query(`
+      INSERT INTO complaints (user_id, category, description)
+      VALUES ($1, $2, $3)
+      RETURNING id, category, status, created_at
+    `, [req.user.id, category, description.trim()]);
+    logger.info('Complaint created', { user_id: req.user.id, category, complaint_id: result.rows[0].id });
+    res.status(201).json({ ok: true, complaint: result.rows[0] });
+  } catch (err) {
+    logger.error('Complaint create error', { error: err.message });
+    res.status(500).json({ error: 'Erro interno' });
+  }
+});
+
+/**
+ * GET /auth/complaints/my
+ * Lista as reclamações do usuário autenticado.
+ */
+router.get('/complaints/my', auth, async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT id, category, description, status, admin_response, responded_at, created_at
+      FROM complaints
+      WHERE user_id = $1
+      ORDER BY created_at DESC
+    `, [req.user.id]);
+    res.json({ ok: true, complaints: result.rows });
+  } catch (err) {
+    res.status(500).json({ error: 'Erro interno' });
+  }
+});
+
 module.exports = router;

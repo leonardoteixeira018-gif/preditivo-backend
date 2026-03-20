@@ -167,11 +167,17 @@ function calculateProfile(answers) {
 
 /**
  * Retorna os limites operacionais de um perfil.
+ * Lê do configCache (hot-reload via admin) com fallback para PROFILES hardcoded.
  * @param {string} profile — 'conservador'|'moderado'|'arrojado'
  * @returns {object} limits
  */
 function getLimits(profile) {
-  return (PROFILES[profile] || PROFILES.conservador).limits;
+  try {
+    const configCache = require('./configCache');
+    return configCache.getLimits(profile);
+  } catch {
+    return (PROFILES[profile] || PROFILES.conservador).limits;
+  }
 }
 
 /**
