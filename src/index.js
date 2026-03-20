@@ -44,10 +44,12 @@ app.use(cors({
 }));
 
 app.use(express.json({
+  limit: '10mb', // aumentado para suportar anexos base64 (PDFs, imagens) de até ~7MB
   verify(req, res, buf) {
     req.rawBody = buf;
   }
 }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use(cookieParser());
 app.use(requestLogger);
 
