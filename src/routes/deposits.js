@@ -205,7 +205,51 @@ router.post('/infinitepay/webhook/:token', webhookLimiter, async (req, res) => {
     await processReferralBonus(deposit.user_id, deposit.amount, client);
     await client.query('COMMIT');
 
-    const userInfo = await client.query('SELECT email, username FROM users WHERE id = $1', [deposit.user_id]);
+    // ── PLD/FT: Monitoramento automático COAF (Lei 9.613/98 Art. 11) ──────────
+    // Verifica se o total mensal do usuário atingiu R$10.000 após este depósito.
+    // Executa após o COMMIT para não bloquear a transação principal.
+    try {
+      const COAF_THRESHOLD = parseFloat(process.env.COAF_THRESHOLD || '10000');
+      const monthlyRes = await pool.query(
+        `SELECT COALESCE(SUM(amount), 0)::numeric AS monthly_total
+         FROM deposits
+         WHERE user_id = $1
+           AND status = 'confirmed'
+           AND created_at >= date_trunc('month', NOW())`,
+        [deposit.user_id]
+      );
+      const monthlyTotal = parseFloat(monthlyRes.rows[0].monthly_total);
+      if (monthlyTotal >= COAF_THRESHOLD) {
+        const existingFlag = await pool.query(
+          `SELECT id FROM coaf_flags
+           WHERE user_id = $1
+             AND created_at >= date_trunc('month', NOW())
+             AND status = 'pending'
+           LIMIT 1`,
+          [deposit.user_id]
+        );
+        if (existingFlag.rows.length) {
+          await pool.query(
+            `UPDATE coaf_flags SET month_total = $1 WHERE id = $2`,
+            [monthlyTotal, existingFlag.rows[0].id]
+          );
+          logger.info('PLD/FT: Flag COAF atualizado', { user_id: deposit.user_id, monthly_total: monthlyTotal });
+        } else {
+          await pool.query(
+            `INSERT INTO coaf_flags (user_id, deposit_id, month_total, threshold, status)
+             VALUES ($1, $2, $3, $4, 'pending')`,
+            [deposit.user_id, deposit.id, monthlyTotal, COAF_THRESHOLD]
+          );
+          logger.warn('PLD/FT: Flag COAF criado automaticamente', { user_id: deposit.user_id, monthly_total: monthlyTotal, threshold: COAF_THRESHOLD });
+        }
+      }
+    } catch (coafErr) {
+      // Não-fatal: falha no monitoramento COAF não cancela o depósito
+      logger.error('PLD/FT COAF auto-check error', { error: coafErr.message });
+    }
+    // ─────────────────────────────────────────────────────────────────────────
+
+    const userInfo = await pool.query('SELECT email, username FROM users WHERE id = $1', [deposit.user_id]);
     if (userInfo.rows.length) {
       const { sendEmail } = require('../lib/email');
       const { APP_BRAND } = require('../lib/appConfig');

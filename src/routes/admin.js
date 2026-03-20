@@ -2000,6 +2000,160 @@ router.get('/data-deletion-requests', async (req, res) => {
   }
 });
 
+// ── BLOCO 11: RELATÓRIO CVM SANDBOX ───────────────────────────────────────────
+
+/**
+ * GET /admin/reports/cvm-sandbox
+ * Gera relatório operacional periódico para o CVM Sandbox (Resolução CVM 30/2021 Art. 10).
+ * Query params:
+ *   month=YYYY-MM  (default: mês atual)
+ *   format=json|csv (default: json)
+ */
+router.get('/reports/cvm-sandbox', async (req, res) => {
+  const { month, format = 'json' } = req.query;
+
+  let periodStart, periodEnd;
+  if (month && /^\d{4}-\d{2}$/.test(month)) {
+    const d = new Date(`${month}-01T12:00:00`);
+    periodStart = `${month}-01`;
+    const lastDay = new Date(d.getFullYear(), d.getMonth() + 1, 0);
+    periodEnd = lastDay.toISOString().substring(0, 10);
+  } else {
+    const now = new Date();
+    const mm = String(now.getMonth() + 1).padStart(2, '0');
+    periodStart = `${now.getFullYear()}-${mm}-01`;
+    const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+    periodEnd = lastDay.toISOString().substring(0, 10);
+  }
+
+  try {
+    const [usuariosRes, financeiroRes, mercadosRes, apostasRes, coafRes, pepRes, termosRes] = await Promise.all([
+      pool.query(`
+        SELECT
+          COUNT(*) FILTER (WHERE created_at BETWEEN $1::date AND $2::date + INTERVAL '1 day') AS novos_no_periodo,
+          COUNT(*) FILTER (WHERE kyc_status = 'approved')                AS kyc_aprovados,
+          COUNT(*) FILTER (WHERE kyc_status IN ('pending','submitted'))   AS kyc_pendentes,
+          COUNT(*) FILTER (WHERE kyc_status = 'rejected')                AS kyc_rejeitados,
+          COUNT(*) FILTER (WHERE suitability_profile = 'conservador')    AS perfil_conservador,
+          COUNT(*) FILTER (WHERE suitability_profile = 'moderado')       AS perfil_moderado,
+          COUNT(*) FILTER (WHERE suitability_profile = 'arrojado')       AS perfil_arrojado,
+          COUNT(*) FILTER (WHERE suitability_profile IS NULL)            AS sem_perfil,
+          COUNT(*) FILTER (WHERE two_fa_enabled = TRUE)                  AS com_2fa,
+          COUNT(*) FILTER (WHERE self_excluded_until > NOW())            AS auto_excluidos,
+          COUNT(*) AS total_usuarios
+        FROM users WHERE COALESCE(is_bot, FALSE) = FALSE
+      `, [periodStart, periodEnd]),
+
+      pool.query(`
+        SELECT
+          COALESCE(SUM(d.amount) FILTER (WHERE d.status='confirmed' AND d.created_at BETWEEN $1::date AND $2::date + INTERVAL '1 day'), 0)::numeric AS depositos_no_periodo,
+          COALESCE(SUM(d.amount) FILTER (WHERE d.status='confirmed'), 0)::numeric AS depositos_total_historico,
+          COUNT(*) FILTER (WHERE d.status='confirmed' AND d.created_at BETWEEN $1::date AND $2::date + INTERVAL '1 day') AS num_depositos_periodo,
+          COUNT(*) FILTER (WHERE d.status='confirmed') AS num_depositos_total
+        FROM deposits d
+        JOIN users u ON u.id = d.user_id AND COALESCE(u.is_bot, FALSE) = FALSE
+      `, [periodStart, periodEnd]),
+
+      pool.query(`
+        SELECT
+          COUNT(*) FILTER (WHERE status = 'open')     AS mercados_abertos,
+          COUNT(*) FILTER (WHERE status = 'resolved') AS mercados_resolvidos,
+          COUNT(*) FILTER (WHERE created_at BETWEEN $1::date AND $2::date + INTERVAL '1 day') AS mercados_criados_no_periodo,
+          COUNT(*) AS total_mercados
+        FROM markets
+      `, [periodStart, periodEnd]),
+
+      pool.query(`
+        SELECT
+          COUNT(*) FILTER (WHERE b.created_at BETWEEN $1::date AND $2::date + INTERVAL '1 day') AS apostas_no_periodo,
+          COALESCE(SUM(b.amount) FILTER (WHERE b.created_at BETWEEN $1::date AND $2::date + INTERVAL '1 day'), 0)::numeric AS volume_no_periodo,
+          COALESCE(SUM(b.amount), 0)::numeric AS volume_total_historico,
+          COUNT(*) AS total_apostas
+        FROM bets b
+        JOIN users u ON u.id = b.user_id AND COALESCE(u.is_bot, FALSE) = FALSE
+      `, [periodStart, periodEnd]),
+
+      pool.query(`
+        SELECT
+          COUNT(*) FILTER (WHERE status = 'pending')   AS coaf_pendentes,
+          COUNT(*) FILTER (WHERE status = 'reported')  AS coaf_reportados,
+          COUNT(*) FILTER (WHERE status = 'dismissed') AS coaf_descartados,
+          COUNT(*) AS coaf_total
+        FROM coaf_flags
+      `),
+
+      pool.query(`
+        SELECT
+          COUNT(*) FILTER (WHERE pep_status = 'flagged')       AS pep_flagged,
+          COUNT(*) FILTER (WHERE pep_status = 'cleared')       AS pep_cleared,
+          COUNT(*) FILTER (WHERE pep_status = 'confirmed_pep') AS pep_confirmados,
+          COUNT(*) FILTER (WHERE sanctions_status = 'flagged') AS sancoes_flagged
+        FROM users WHERE COALESCE(is_bot, FALSE) = FALSE
+      `),
+
+      pool.query(`
+        SELECT
+          COUNT(*) FILTER (WHERE risk_term_accepted_at BETWEEN $1::date AND $2::date + INTERVAL '1 day') AS termos_risco_aceitos_periodo,
+          COUNT(*) FILTER (WHERE risk_term_accepted_at IS NOT NULL)       AS total_termos_risco_aceitos,
+          COUNT(*) FILTER (WHERE lgpd_consent_at IS NOT NULL)            AS total_lgpd_consentidos,
+          COUNT(*) FILTER (WHERE data_deletion_requested_at IS NOT NULL) AS solicitacoes_exclusao_lgpd
+        FROM users WHERE COALESCE(is_bot, FALSE) = FALSE
+      `, [periodStart, periodEnd]),
+    ]);
+
+    const report = {
+      metadata: {
+        gerado_em: new Date().toISOString(),
+        gerado_por: 'sistema_bubuya',
+        periodo: { inicio: periodStart, fim: periodEnd },
+        regulacao: 'CVM Resolução 30/2021 — Art. 10 — Relatório Operacional Periódico',
+        sandbox: true,
+        versao_sistema: '1.0.0',
+        instrucoes: 'Submeter mensalmente à CVM via portal do Sandbox Regulatório.',
+      },
+      usuarios: usuariosRes.rows[0],
+      financeiro: financeiroRes.rows[0],
+      mercados: mercadosRes.rows[0],
+      apostas: apostasRes.rows[0],
+      compliance: {
+        coaf: coafRes.rows[0],
+        pep_sancoes: pepRes.rows[0],
+      },
+      termos_lgpd: termosRes.rows[0],
+    };
+
+    if (format === 'csv') {
+      const flat = {
+        periodo_inicio: periodStart,
+        periodo_fim: periodEnd,
+        gerado_em: report.metadata.gerado_em,
+        ...report.usuarios,
+        ...report.financeiro,
+        ...report.mercados,
+        ...report.apostas,
+        ...report.compliance.coaf,
+        ...report.compliance.pep_sancoes,
+        ...report.termos_lgpd,
+      };
+      const keys = Object.keys(flat);
+      const values = keys.map(k => {
+        const v = flat[k];
+        return typeof v === 'object' ? JSON.stringify(v) : String(v ?? '');
+      });
+      const csv = '\ufeff' + keys.join(';') + '\n' + values.join(';');
+      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+      res.setHeader('Content-Disposition',
+        `attachment; filename="relatorio-cvm-sandbox-${periodStart.substring(0, 7)}.csv"`);
+      return res.send(csv);
+    }
+
+    res.json({ ok: true, report });
+  } catch (err) {
+    logger.error('CVM Sandbox report error', { error: err.message });
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ── SANDBOX DE TESTES ─────────────────────────────────────────────────────────
 
 /**

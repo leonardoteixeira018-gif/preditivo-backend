@@ -814,6 +814,11 @@ router.post('/admin/:userId/reject', adminAuth, async (req, res) => {
  * Lista flags COAF pendentes de revisão.
  */
 router.get('/admin/coaf-flags', adminAuth, async (req, res) => {
+  // ?status=all retorna todos os flags (para a aba de Relatórios)
+  // sem parâmetro retorna apenas pendentes (para o painel de Compliance)
+  const { status } = req.query;
+  const whereClause = status === 'all' ? '' : "WHERE cf.status = 'pending'";
+
   try {
     const result = await pool.query(`
       SELECT
@@ -823,13 +828,14 @@ router.get('/admin/coaf-flags', adminAuth, async (req, res) => {
         u.email,
         u.full_name,
         cf.month_total,
+        cf.threshold,
         cf.status,
         cf.created_at,
         cf.resolved_at,
         cf.resolution_notes
       FROM coaf_flags cf
       JOIN users u ON u.id = cf.user_id
-      WHERE cf.status = 'pending'
+      ${whereClause}
       ORDER BY cf.created_at DESC
     `);
 
@@ -867,6 +873,104 @@ router.post('/admin/coaf-flags/:id/resolve', adminAuth, async (req, res) => {
   } catch (err) {
     logger.error('COAF flag resolve error', { id, error: err.message });
     res.status(500).json({ error: 'Erro interno do servidor' });
+  }
+});
+
+/**
+ * GET /kyc/admin/coaf-flags/:id/siscoaf-report
+ * Gera documento estruturado de comunicação ao COAF/SISCOAF para um flag específico.
+ * O documento contém todos os dados necessários para submissão em https://siscoaf.fazenda.gov.br/
+ * Lei 9.613/98 Art. 11 — Prazo: 24h após identificação.
+ */
+router.get('/admin/coaf-flags/:id/siscoaf-report', adminAuth, async (req, res) => {
+  const { id } = req.params;
+  try {
+    const result = await pool.query(`
+      SELECT
+        cf.id, cf.user_id, cf.month_total, cf.threshold, cf.status,
+        cf.created_at, cf.resolved_at, cf.resolution_notes,
+        u.username, u.email, u.full_name, u.cpf, u.date_of_birth,
+        u.kyc_status, u.pep_status, u.risk_level,
+        d.amount AS deposit_amount, d.created_at AS deposit_date, d.code AS deposit_code
+      FROM coaf_flags cf
+      JOIN users u ON u.id = cf.user_id
+      LEFT JOIN deposits d ON d.id = cf.deposit_id
+      WHERE cf.id = $1
+    `, [id]);
+
+    if (!result.rows.length) return res.status(404).json({ error: 'Flag COAF não encontrado' });
+
+    const f = result.rows[0];
+    const periodo = f.created_at ? new Date(f.created_at).toISOString().substring(0, 7) : new Date().toISOString().substring(0, 7);
+
+    const doc = {
+      siscoaf: {
+        versao_protocolo: '2.0',
+        tipo_comunicacao: 'comunicacao_suspeita',
+        data_geracao: new Date().toISOString(),
+        referencia_interna: f.id,
+        instrucoes_obrigatorias: [
+          'SUBMETER ao SISCOAF em: https://siscoaf.fazenda.gov.br/',
+          'PRAZO LEGAL: 24 horas após identificação (Lei 9.613/98 Art. 11)',
+          'MANTER cópia por mínimo 5 anos (BACEN Circular 3.978/2020 Art. 40)',
+          'PROIBIDO comunicar ao cliente sobre esta comunicação (sigilo legal)',
+          'REGISTRAR número de protocolo COAF após envio e arquivar',
+        ],
+        entidade_comunicante: {
+          nome_empresarial: 'BUBUYA MERCADOS PREDITIVOS LTDA',
+          cnpj: process.env.CNPJ || 'A_PREENCHER',
+          tipo_atividade: 'Plataforma de Mercados Preditivos — Derivativo Financeiro',
+          regulacao: 'CVM Resolução 30/2021 — Sandbox Regulatório',
+          responsavel_pld_ft: process.env.DPO_NAME || 'A_PREENCHER',
+          email_responsavel: process.env.DPO_EMAIL || 'A_PREENCHER',
+          endereco: process.env.COMPANY_ADDRESS || 'A_PREENCHER',
+        },
+        comunicacao: {
+          numero_interno: f.id,
+          data_identificacao: f.created_at,
+          natureza_suspeita: 'volume_financeiro_relevante_mensal',
+          lei_aplicavel: 'Lei 9.613/98 Art. 11 — BACEN Circular 3.978/2020',
+          descricao_detalhada: f.resolution_notes ||
+            `Usuário atingiu volume mensal de R$${parseFloat(f.month_total).toFixed(2)} ` +
+            `no período ${periodo}, superando o limiar de R$${parseFloat(f.threshold).toFixed(2)} ` +
+            `conforme Lei 9.613/98 Art. 11 e BACEN Circular 3.978/2020.`,
+        },
+        pessoa_comunicada: {
+          tipo: 'pessoa_fisica',
+          nome_completo: f.full_name || 'DADOS_PENDENTES_KYC',
+          cpf: f.cpf ? f.cpf.replace(/^(\d{3})(\d{3})(\d{3})(\d{2})$/, '$1.$2.$3-$4') : 'DADOS_PENDENTES_KYC',
+          data_nascimento: f.date_of_birth || null,
+          email_plataforma: f.email,
+          username_plataforma: f.username,
+          id_interno: f.user_id,
+          status_kyc: f.kyc_status,
+          e_pep: f.pep_status === 'confirmed_pep',
+          nivel_risco: f.risk_level || 'normal',
+        },
+        operacoes_suspeitas: [
+          {
+            tipo: 'deposito_financeiro_acumulado',
+            moeda: 'BRL',
+            valor_mensal_acumulado: parseFloat(f.month_total),
+            limiar_monitoramento: parseFloat(f.threshold),
+            periodo_referencia: periodo,
+            deposito_gatilho: f.deposit_code || null,
+            valor_deposito_gatilho: f.deposit_amount ? parseFloat(f.deposit_amount) : null,
+            data_deposito_gatilho: f.deposit_date || null,
+            canal: 'plataforma_digital_pix',
+          }
+        ],
+      }
+    };
+
+    res.setHeader('Content-Type', 'application/json');
+    res.setHeader('Content-Disposition',
+      `attachment; filename="siscoaf-comunicacao-${id.substring(0, 8)}-${new Date().toISOString().substring(0, 10)}.json"`
+    );
+    res.json(doc);
+  } catch (err) {
+    logger.error('SISCOAF report generation error', { id, error: err.message });
+    res.status(500).json({ error: 'Erro interno ao gerar comunicação COAF' });
   }
 });
 
