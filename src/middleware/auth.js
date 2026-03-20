@@ -26,7 +26,9 @@ async function isTokenBlacklisted(token) {
 module.exports = async (req, res, next) => {
   const bearerToken = req.headers.authorization?.split(' ')[1];
   const cookieToken = req.cookies?.auth_token;
-  const token = cookieToken || bearerToken;
+  // Prioridade: Bearer token (header) > cookie — o frontend sempre envia o Bearer token
+  // O cookie é fallback para contextos onde o header não pode ser enviado
+  const token = bearerToken || cookieToken;
   if (!token) return res.status(401).json({ error: 'Token required' });
   try {
     if (await isTokenBlacklisted(token)) {
