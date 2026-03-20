@@ -20,6 +20,14 @@ if (process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
   }
 }
 
+// GET /notifications/vapid-public-key — retorna a chave pública VAPID para o frontend
+router.get('/vapid-public-key', (req, res) => {
+  if (!vapidConfigured || !process.env.VAPID_PUBLIC_KEY) {
+    return res.status(503).json({ error: 'Push notifications não configuradas' });
+  }
+  res.json({ publicKey: process.env.VAPID_PUBLIC_KEY });
+});
+
 // POST /notifications/push-subscribe — registrar subscription de push
 router.post('/push-subscribe', auth, async (req, res) => {
   try {

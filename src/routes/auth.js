@@ -9,6 +9,7 @@ const { APP_BRAND } = require('../lib/appConfig');
 const { getUserAuditLogs, logUserAction } = require('../lib/user-audit');
 const speakeasy = require('speakeasy');
 const QRCode    = require('qrcode');
+const { sendPushToUser } = require('./notifications');
 
 function authCookieOptions() {
   return {
@@ -195,6 +196,21 @@ router.post('/register/verify', async (req, res) => {
     }
 
     await client.query('COMMIT');
+
+    // Push notification para quem indicou (referrer)
+    if (payload.referred_by) {
+      try {
+        await sendPushToUser(
+          payload.referred_by,
+          '🎁 Novo indicado cadastrado!',
+          `Alguém usou seu link de indicação e se cadastrou na ${APP_BRAND}. Seu bônus será creditado após o primeiro depósito do indicado.`,
+          '/profile.html'
+        );
+      } catch (pushErr) {
+        // não bloqueia o fluxo de registro
+      }
+    }
+
     const { sendEmail } = require('../lib/email');
     await sendEmail(
       normalizedEmail,

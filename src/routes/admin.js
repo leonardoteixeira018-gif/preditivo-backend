@@ -11,6 +11,7 @@ const { runFullScreening, screenPEP, screenSanctions } = require('../lib/pep-scr
 const { validateAnswers, calculateProfile, calcExpiresAt } = require('../lib/suitability');
 const { logAdminAction } = require('../lib/adminAudit');
 const configCache = require('../lib/configCache');
+const { sendPushToUser } = require('./notifications');
 
 router.use(adminAuth);
 
@@ -409,6 +410,17 @@ router.post('/deposits/:id/confirm', async (req, res) => {
          <p>Seu deposito de <strong>R$${parseFloat(dep.rows[0].amount).toFixed(2)}</strong> foi confirmado manualmente pela nossa equipe.</p>
          <p>Seu saldo ja foi atualizado. Boa sorte!</p>`
       );
+      // Push notification de depósito confirmado
+      try {
+        await sendPushToUser(
+          dep.rows[0].user_id,
+          '💰 Depósito confirmado!',
+          `R$${parseFloat(dep.rows[0].amount).toFixed(2)} foram creditados na sua conta. Bom jogo!`,
+          '/profile.html'
+        );
+      } catch (pushErr) {
+        logger.warn('[admin/deposits] push error:', pushErr.message);
+      }
     }
 
     // Log de auditoria
@@ -994,7 +1006,6 @@ router.post('/markets/:id/resolve', async (req, res) => {
     // Push notifications de resultado (fire-and-forget)
     if (newlyProcessed > 0) {
       try {
-        const { sendPushToUser } = require('./notifications');
         const wonByUserPush = {};
         wonResult.rows.forEach(b => {
           wonByUserPush[b.user_id] = (wonByUserPush[b.user_id] || 0) + (parseFloat(b.potential_payout) || 0);
@@ -2500,6 +2511,18 @@ router.post('/complaints/:id/messages', adminAuth, async (req, res) => {
         UPDATE complaints SET admin_response = $1, responded_at = NOW(), responded_by = 'admin'
         WHERE id = $2
       `, [message.trim(), id]);
+
+      // Push notification para o dono do ticket
+      try {
+        const ticketOwner = await pool.query(`SELECT user_id, subject FROM complaints WHERE id = $1`, [id]);
+        if (ticketOwner.rows.length) {
+          const { user_id, subject } = ticketOwner.rows[0];
+          const statusMsg = status === 'resolved' ? ' (Ticket resolvido)' : status === 'rejected' ? ' (Ticket indeferido)' : '';
+          await sendPushToUser(user_id, `📣 Resposta no seu ticket`, `Sua solicitação "${subject || 'sem título'}" recebeu uma resposta${statusMsg}.`, '/profile.html');
+        }
+      } catch (pushErr) {
+        logger.warn('[admin/complaints] push error:', pushErr.message);
+      }
     }
 
     await logAdminAction('admin', is_internal ? 'complaint_internal_note' : 'complaint_reply', 'complaint', id,
