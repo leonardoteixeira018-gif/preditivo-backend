@@ -2421,7 +2421,9 @@ router.get('/complaints', async (req, res) => {
     const result = await pool.query(`
       SELECT c.id, c.category, c.description, c.status,
              c.admin_response, c.responded_at, c.responded_by, c.created_at,
-             u.username, u.email
+             u.username, u.email,
+             (SELECT COUNT(*) FROM complaint_messages WHERE complaint_id = c.id) AS msg_count,
+             (SELECT COUNT(*) FROM complaint_attachments WHERE complaint_id = c.id) AS att_count
       FROM complaints c
       JOIN users u ON u.id = c.user_id
       ${where}
@@ -2433,7 +2435,119 @@ router.get('/complaints', async (req, res) => {
   }
 });
 
-/** PATCH /admin/complaints/:id — responde e resolve uma reclamação */
+/**
+ * GET /admin/complaints/:id
+ * Detalhe completo do ticket: dados do usuário, thread completa (incl. internas), anexos.
+ */
+router.get('/complaints/:id', adminAuth, async (req, res) => {
+  const { id } = req.params;
+  try {
+    const comp = await pool.query(`
+      SELECT c.*,
+             u.username, u.email, u.full_name, u.kyc_status, u.suitability_profile,
+             u.suitability_expires_at, u.risk_level, u.pep_status,
+             u.created_at AS user_since, u.balance,
+             (SELECT COUNT(*) FROM bets WHERE user_id = u.id AND COALESCE(is_bot,FALSE)=FALSE) AS total_bets,
+             (SELECT COALESCE(SUM(amount),0) FROM deposits WHERE user_id = u.id AND status='confirmed') AS total_deposited
+      FROM complaints c
+      JOIN users u ON u.id = c.user_id
+      WHERE c.id = $1
+    `, [id]);
+    if (!comp.rows.length) return res.status(404).json({ error: 'Ticket não encontrado' });
+
+    const messages = await pool.query(
+      `SELECT * FROM complaint_messages WHERE complaint_id = $1 ORDER BY created_at ASC`, [id]
+    );
+    const attachments = await pool.query(
+      `SELECT id, message_id, filename, mime_type, uploaded_at FROM complaint_attachments WHERE complaint_id = $1`, [id]
+    );
+
+    res.json({ ok: true, complaint: comp.rows[0], messages: messages.rows, attachments: attachments.rows });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /admin/complaints/:id/messages
+ * Admin envia mensagem pública ou nota interna no ticket.
+ */
+router.post('/complaints/:id/messages', adminAuth, async (req, res) => {
+  const { id } = req.params;
+  const { message, is_internal = false, status } = req.body;
+  if (!message || message.trim().length < 2) {
+    return res.status(400).json({ error: 'Mensagem muito curta' });
+  }
+  const VALID_STATUS = ['open', 'in_progress', 'resolved', 'rejected'];
+  if (status && !VALID_STATUS.includes(status)) {
+    return res.status(400).json({ error: 'Status inválido' });
+  }
+  try {
+    const comp = await pool.query(`SELECT * FROM complaints WHERE id = $1`, [id]);
+    if (!comp.rows.length) return res.status(404).json({ error: 'Ticket não encontrado' });
+
+    const msgResult = await pool.query(
+      `INSERT INTO complaint_messages (complaint_id, sender_type, message, is_internal)
+       VALUES ($1, 'admin', $2, $3) RETURNING *`,
+      [id, message.trim(), !!is_internal]
+    );
+
+    if (status) {
+      await pool.query(`UPDATE complaints SET status = $1 WHERE id = $2`, [status, id]);
+    }
+    if (!is_internal) {
+      await pool.query(`
+        UPDATE complaints SET admin_response = $1, responded_at = NOW(), responded_by = 'admin'
+        WHERE id = $2
+      `, [message.trim(), id]);
+    }
+
+    await logAdminAction('admin', is_internal ? 'complaint_internal_note' : 'complaint_reply', 'complaint', id,
+      { is_internal, new_status: status }, req.ip);
+
+    res.json({ ok: true, message: msgResult.rows[0] });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * PATCH /admin/complaints/:id/internal-notes
+ * Atualiza o log de acompanhamento interno do ticket.
+ */
+router.patch('/complaints/:id/internal-notes', adminAuth, async (req, res) => {
+  const { id } = req.params;
+  const { internal_notes } = req.body;
+  try {
+    await pool.query(`UPDATE complaints SET internal_notes = $1 WHERE id = $2`, [internal_notes || '', id]);
+    await logAdminAction('admin', 'complaint_notes_update', 'complaint', id, {}, req.ip);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * GET /admin/complaints/:id/attachment/:attId
+ */
+router.get('/complaints/:id/attachment/:attId', adminAuth, async (req, res) => {
+  const { id, attId } = req.params;
+  try {
+    const att = await pool.query(
+      `SELECT filename, data, mime_type FROM complaint_attachments WHERE id = $1 AND complaint_id = $2`, [attId, id]
+    );
+    if (!att.rows.length) return res.status(404).json({ error: 'Anexo não encontrado' });
+    const { filename, data, mime_type } = att.rows[0];
+    const buf = Buffer.from(data.replace(/^data:[^;]+;base64,/, ''), 'base64');
+    res.setHeader('Content-Type', mime_type || 'application/octet-stream');
+    res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
+    res.send(buf);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/** PATCH /admin/complaints/:id — legado (mantido para compatibilidade) */
 router.patch('/complaints/:id', async (req, res) => {
   const { id } = req.params;
   const { status, admin_response } = req.body;

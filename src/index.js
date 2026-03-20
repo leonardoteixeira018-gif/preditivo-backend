@@ -464,6 +464,34 @@ app.listen(PORT, async () => {
   `).catch(()=>{});
   await pool.query("CREATE INDEX IF NOT EXISTS idx_complaints_user ON complaints(user_id, created_at DESC)").catch(()=>{});
   await pool.query("CREATE INDEX IF NOT EXISTS idx_complaints_status ON complaints(status, created_at DESC)").catch(()=>{});
+  // Campos extras para sistema de tickets
+  await pool.query("ALTER TABLE complaints ADD COLUMN IF NOT EXISTS internal_notes TEXT").catch(()=>{});
+
+  // complaint_messages: thread de mensagens por ticket
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS complaint_messages (
+      id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      complaint_id UUID NOT NULL REFERENCES complaints(id) ON DELETE CASCADE,
+      sender_type  VARCHAR(10) NOT NULL CHECK (sender_type IN ('user','admin')),
+      message      TEXT NOT NULL,
+      is_internal  BOOLEAN NOT NULL DEFAULT FALSE,
+      created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `).catch(()=>{});
+  await pool.query("CREATE INDEX IF NOT EXISTS idx_complaint_msgs ON complaint_messages(complaint_id, created_at ASC)").catch(()=>{});
+
+  // complaint_attachments: arquivos (base64) por ticket
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS complaint_attachments (
+      id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      complaint_id UUID NOT NULL REFERENCES complaints(id) ON DELETE CASCADE,
+      message_id   UUID REFERENCES complaint_messages(id) ON DELETE CASCADE,
+      filename     VARCHAR(255),
+      data         TEXT NOT NULL,
+      mime_type    VARCHAR(50),
+      uploaded_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `).catch(()=>{});
 
   // ── B: Configuração de limites operacionais ──────────────────────────────
   await pool.query(`

@@ -988,7 +988,7 @@ const COMPLAINT_CATEGORIES = ['resolucao_mercado', 'kyc_bloqueio', 'saque_bloque
  * Usuário abre uma reclamação formal.
  */
 router.post('/complaints', auth, async (req, res) => {
-  const { category, description } = req.body;
+  const { category, description, attachment } = req.body;
   if (!category || !COMPLAINT_CATEGORIES.includes(category)) {
     return res.status(400).json({ error: 'Categoria inválida', valid: COMPLAINT_CATEGORIES });
   }
@@ -1004,8 +1004,16 @@ router.post('/complaints', auth, async (req, res) => {
       VALUES ($1, $2, $3)
       RETURNING id, category, status, created_at
     `, [req.user.id, category, description.trim()]);
-    logger.info('Complaint created', { user_id: req.user.id, category, complaint_id: result.rows[0].id });
-    res.status(201).json({ ok: true, complaint: result.rows[0] });
+    const complaint = result.rows[0];
+    // Salva anexo inicial, se enviado
+    if (attachment && attachment.data) {
+      await pool.query(`
+        INSERT INTO complaint_attachments (complaint_id, filename, data, mime_type)
+        VALUES ($1, $2, $3, $4)
+      `, [complaint.id, attachment.filename || 'arquivo', attachment.data, attachment.mime_type || 'application/octet-stream']);
+    }
+    logger.info('Complaint created', { user_id: req.user.id, category, complaint_id: complaint.id });
+    res.status(201).json({ ok: true, complaint });
   } catch (err) {
     logger.error('Complaint create error', { error: err.message });
     res.status(500).json({ error: 'Erro interno' });
@@ -1014,7 +1022,7 @@ router.post('/complaints', auth, async (req, res) => {
 
 /**
  * GET /auth/complaints/my
- * Lista as reclamações do usuário autenticado.
+ * Lista as reclamações do usuário autenticado (com thread de mensagens).
  */
 router.get('/complaints/my', auth, async (req, res) => {
   try {
@@ -1024,7 +1032,84 @@ router.get('/complaints/my', auth, async (req, res) => {
       WHERE user_id = $1
       ORDER BY created_at DESC
     `, [req.user.id]);
-    res.json({ ok: true, complaints: result.rows });
+
+    // Para cada complaint, busca mensagens e anexos
+    const complaints = await Promise.all(result.rows.map(async (c) => {
+      const msgs = await pool.query(
+        `SELECT id, sender_type, message, is_internal, created_at
+         FROM complaint_messages
+         WHERE complaint_id = $1 AND is_internal = FALSE
+         ORDER BY created_at ASC`, [c.id]
+      );
+      const atts = await pool.query(
+        `SELECT id, filename, mime_type, uploaded_at FROM complaint_attachments WHERE complaint_id = $1`, [c.id]
+      );
+      return { ...c, messages: msgs.rows, attachments: atts.rows };
+    }));
+
+    res.json({ ok: true, complaints });
+  } catch (err) {
+    res.status(500).json({ error: 'Erro interno' });
+  }
+});
+
+/**
+ * POST /auth/complaints/:id/messages
+ * Usuário envia uma mensagem de acompanhamento em um ticket existente.
+ */
+router.post('/complaints/:id/messages', auth, async (req, res) => {
+  const { id } = req.params;
+  const { message, attachment } = req.body;
+  if (!message || message.trim().length < 2) {
+    return res.status(400).json({ error: 'Mensagem muito curta' });
+  }
+  try {
+    const comp = await pool.query(
+      `SELECT id, status FROM complaints WHERE id = $1 AND user_id = $2`, [id, req.user.id]
+    );
+    if (!comp.rows.length) return res.status(404).json({ error: 'Ticket não encontrado' });
+    if (comp.rows[0].status === 'resolved') {
+      return res.status(400).json({ error: 'Ticket já resolvido — abra uma nova reclamação se necessário' });
+    }
+
+    const msgResult = await pool.query(
+      `INSERT INTO complaint_messages (complaint_id, sender_type, message)
+       VALUES ($1, 'user', $2) RETURNING *`, [id, message.trim()]
+    );
+    // Reabrir para 'in_progress' se estava 'open'
+    await pool.query(`UPDATE complaints SET status = 'in_progress' WHERE id = $1 AND status = 'open'`, [id]);
+
+    if (attachment && attachment.data) {
+      await pool.query(
+        `INSERT INTO complaint_attachments (complaint_id, message_id, filename, data, mime_type)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [id, msgResult.rows[0].id, attachment.filename || 'arquivo', attachment.data, attachment.mime_type || 'application/octet-stream']
+      );
+    }
+
+    res.json({ ok: true, message: msgResult.rows[0] });
+  } catch (err) {
+    logger.error('Complaint message error', { error: err.message });
+    res.status(500).json({ error: 'Erro interno' });
+  }
+});
+
+/**
+ * GET /auth/complaints/:id/attachment/:attId
+ * Retorna o dado base64 de um anexo (somente se pertencer ao usuário).
+ */
+router.get('/complaints/:id/attachment/:attId', auth, async (req, res) => {
+  const { id, attId } = req.params;
+  try {
+    const comp = await pool.query(`SELECT id FROM complaints WHERE id = $1 AND user_id = $2`, [id, req.user.id]);
+    if (!comp.rows.length) return res.status(404).json({ error: 'Não encontrado' });
+    const att = await pool.query(`SELECT filename, data, mime_type FROM complaint_attachments WHERE id = $1 AND complaint_id = $2`, [attId, id]);
+    if (!att.rows.length) return res.status(404).json({ error: 'Anexo não encontrado' });
+    const { filename, data, mime_type } = att.rows[0];
+    const buf = Buffer.from(data.replace(/^data:[^;]+;base64,/, ''), 'base64');
+    res.setHeader('Content-Type', mime_type || 'application/octet-stream');
+    res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
+    res.send(buf);
   } catch (err) {
     res.status(500).json({ error: 'Erro interno' });
   }
