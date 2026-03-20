@@ -1635,13 +1635,25 @@ router.post('/users/:userId/coaf-flag', async (req, res) => {
     const user = await pool.query('SELECT id, username FROM users WHERE id = $1', [userId]);
     if (!user.rows.length) return res.status(404).json({ error: 'Usuário não encontrado' });
 
+    // Calcula o total real de depósitos confirmados do mês corrente
+    const monthlyRes = await pool.query(
+      `SELECT COALESCE(SUM(amount), 0)::numeric AS monthly_total
+       FROM deposits
+       WHERE user_id = $1
+         AND status = 'confirmed'
+         AND created_at >= date_trunc('month', NOW())`,
+      [userId]
+    );
+    const monthlyTotal = parseFloat(monthlyRes.rows[0].monthly_total);
+    const threshold = parseFloat(process.env.COAF_THRESHOLD || '10000');
+
     await pool.query(`
       INSERT INTO coaf_flags (user_id, month_total, threshold, status, resolution_notes)
-      VALUES ($1, 0, 10000, 'pending', $2)
-    `, [userId, reason || 'Flag manual inserido pelo admin']);
+      VALUES ($1, $2, $3, 'pending', $4)
+    `, [userId, monthlyTotal, threshold, reason || 'Flag manual inserido pelo admin']);
 
-    logger.info('Manual COAF flag inserted', { userId, username: user.rows[0].username });
-    res.json({ ok: true, message: 'Flag COAF inserido com sucesso' });
+    logger.info('Manual COAF flag inserted', { userId, username: user.rows[0].username, monthlyTotal });
+    res.json({ ok: true, message: 'Flag COAF inserido com sucesso', month_total: monthlyTotal });
   } catch (err) {
     logger.error('Manual COAF flag error', { userId, error: err.message });
     res.status(500).json({ error: err.message });
