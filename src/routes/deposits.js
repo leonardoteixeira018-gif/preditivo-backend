@@ -7,7 +7,7 @@ const auth = require('../middleware/auth');
 const requireKyc = require('../middleware/requireKyc');
 const requireSuitability = require('../middleware/requireSuitability');
 const requireRiskTerm = require('../middleware/requireRiskTerm');
-const { createCheckoutLink } = require('../lib/infinitepay');
+const { ensureCustomer, createPixCharge, getPixQrCode } = require('../lib/asaas');
 
 const webhookLimiter = rateLimit({
   windowMs: 60 * 1000,
@@ -17,156 +17,99 @@ const webhookLimiter = rateLimit({
   message: { error: 'Limite de webhooks excedido' }
 });
 
-// A InfinitePay pode usar tanto token na URL quanto HMAC signature no header.
-// Configure INFINITEPAY_WEBHOOK_TOKEN e INFINITEPAY_WEBHOOK_SECRET no Railway.
-// A URL registrada na InfinitePay deve ser: /deposits/infinitepay/webhook/:token
-
-/**
- * Valida token do webhook (segurança via URL)
- */
-function verifyWebhookToken(token) {
-  const expected = process.env.INFINITEPAY_WEBHOOK_TOKEN;
-  if (!expected) {
-    if (process.env.NODE_ENV === 'production') {
-      console.error('[SECURITY] INFINITEPAY_WEBHOOK_TOKEN não configurada em produção — rejeitando webhook');
-      return false;
-    }
-    console.warn('[WEBHOOK] INFINITEPAY_WEBHOOK_TOKEN ausente — validação ignorada (apenas dev)');
-    return true;
-  }
-  try {
-    return crypto.timingSafeEqual(Buffer.from(token || ''), Buffer.from(expected));
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Valida assinatura HMAC do webhook (segurança via payload)
- * InfinitePay envia X-Signature ou X-Webhook-Signature header com HMAC-SHA256 do payload
- */
-function validateInfinitePaySignature(req) {
-  // Tentar encontrar header de signature (case-insensitive)
-  const signature =
-    req.headers['x-infinitepay-signature'] ||
-    req.headers['x-signature'] ||
-    req.headers['x-webhook-signature'] ||
-    req.headers['signature'];
-
-  const secret = process.env.INFINITEPAY_WEBHOOK_SECRET;
-
-  // Fail-closed: webhook sem assinatura/secret não deve ser aceito
-  if (!signature || !secret) {
-    console.warn('[SECURITY] Webhook rejeitado: assinatura/secret ausente');
-    return false;
-  }
-
-  try {
-    // Raw body original capturado no express.json({ verify })
-    const rawBody = req.rawBody || Buffer.from(JSON.stringify(req.body || {}));
-
-    // Calcular HMAC esperado (SHA256)
-    const expectedSignature = crypto
-      .createHmac('sha256', secret)
-      .update(rawBody)
-      .digest('hex');
-
-    // Comparação segura contra timing attacks
-    const valid = crypto.timingSafeEqual(
-      Buffer.from(signature),
-      Buffer.from(expectedSignature)
-    );
-
-    if (!valid) {
-      console.warn(`[SECURITY] Webhook com assinatura inválida rejeitado — IP: ${req.ip}`);
-      return false;
-    }
-
-    return true;
-  } catch (err) {
-    console.warn(`[SECURITY] Erro ao validar webhook signature: ${err.message}`);
-    return false;
-  }
-}
-
 const REFERRAL_MIN_DEPOSIT = 100;
 const REFERRER_BONUS = 50;
 const REFERRED_BONUS = 20;
 const MIN_DEPOSIT = 10;
 
-function normalizeDepositStatus(status) {
-  const value = String(status || '').toLowerCase();
-  if (['paid', 'approved', 'completed', 'confirmed', 'succeeded', 'success'].includes(value)) {
-    return 'confirmed';
+// ── Asaas webhook validation ─────────────────────────────────────────────────
+// Asaas inclui o campo '$asaas_access_token' no body de cada webhook.
+// Configure ASAAS_WEBHOOK_TOKEN no Railway com o mesmo valor configurado no
+// painel Asaas em Configurações > Notificações.
+function validateAsaasWebhook(req) {
+  const token = req.body?.['$asaas_access_token'];
+  const expected = process.env.ASAAS_WEBHOOK_TOKEN;
+
+  if (!expected) {
+    if (process.env.NODE_ENV === 'production') {
+      logger.error('[SECURITY] ASAAS_WEBHOOK_TOKEN nao configurada em producao — rejeitando webhook');
+      return false;
+    }
+    logger.warn('[WEBHOOK] ASAAS_WEBHOOK_TOKEN ausente — validacao ignorada (apenas dev)');
+    return true;
   }
-  if (['cancelled', 'canceled', 'expired', 'failed', 'refused'].includes(value)) {
-    return 'failed';
+
+  if (!token) {
+    logger.warn('[SECURITY] Webhook Asaas rejeitado: token ausente no payload');
+    return false;
   }
-  return 'pending';
+
+  try {
+    return crypto.timingSafeEqual(Buffer.from(token), Buffer.from(expected));
+  } catch {
+    return false;
+  }
 }
 
-function extractInfinitePayWebhook(body) {
+// ── Asaas event normalizer ───────────────────────────────────────────────────
+function normalizeAsaasEvent(body) {
+  const event = body.event || '';
+  const payment = body.payment || {};
+
+  let status = 'pending';
+  if (['PAYMENT_RECEIVED', 'PAYMENT_CONFIRMED'].includes(event)) {
+    status = 'confirmed';
+  } else if (['PAYMENT_OVERDUE', 'PAYMENT_DELETED', 'PAYMENT_REFUNDED'].includes(event)) {
+    status = 'failed';
+  }
+
   return {
-    status: normalizeDepositStatus(
-      body.status ||
-      body.payment_status ||
-      body.event ||
-      body.type
-    ),
-    orderNsu:
-      body.order_nsu ||
-      body.orderNsu ||
-      body.metadata?.order_nsu ||
-      body.metadata?.orderNsu ||
-      body.reference ||
-      body.external_reference ||
-      body.externalReference ||
-      null,
+    status,
+    paymentId: payment.id || null,
+    externalReference: payment.externalReference || null,
+    value: payment.value || null,
     raw: body
   };
 }
 
-router.post('/infinitepay/webhook/:token', webhookLimiter, async (req, res) => {
+// ── POST /deposits/asaas/webhook ─────────────────────────────────────────────
+router.post('/asaas/webhook', webhookLimiter, async (req, res) => {
   const client = await pool.connect();
 
   try {
-    logger.info('Webhook received from InfinitePay', {
-      ip: req.ip,
-      tokenPrefix: req.params.token.substring(0, 10) + '***'
-    });
+    logger.info('Webhook received from Asaas', { ip: req.ip, event: req.body?.event });
 
-    // Validar token na URL PRIMEIRO
-    if (!verifyWebhookToken(req.params.token)) {
-      logger.warn('Webhook rejected - invalid token', { ip: req.ip });
-      return res.status(401).json({ error: 'Token inválido' });
+    if (!validateAsaasWebhook(req)) {
+      logger.warn('Asaas webhook rejected - invalid token', { ip: req.ip });
+      return res.status(401).json({ error: 'Token invalido' });
     }
 
-    // Validar assinatura HMAC do payload SEGUNDO
-    if (!validateInfinitePaySignature(req)) {
-      logger.warn('Webhook rejected - invalid signature', { ip: req.ip });
-      return res.status(401).json({ error: 'Assinatura inválida' });
+    const event = normalizeAsaasEvent(req.body || {});
+
+    if (!event.paymentId) {
+      logger.warn('Asaas webhook rejected - missing payment.id', { body: req.body });
+      return res.status(400).json({ error: 'payment.id ausente' });
     }
 
-    const event = extractInfinitePayWebhook(req.body || {});
-    if (!event.orderNsu) {
-      logger.warn('Webhook rejected - missing order_nsu', { ip: req.ip });
-      return res.status(400).json({ error: 'order_nsu ausente' });
-    }
-
-    logger.info('Webhook validation passed', {
-      orderNsu: event.orderNsu,
+    logger.info('Asaas webhook validation passed', {
+      paymentId: event.paymentId,
+      externalReference: event.externalReference,
       status: event.status
     });
 
     await client.query('BEGIN');
 
-    const depositResult = await client.query(
-      `SELECT *
-       FROM deposits
-       WHERE code = $1 OR provider_reference = $1
-       FOR UPDATE`,
-      [event.orderNsu]
+    // Busca por provider_reference (payment ID do Asaas) — fallback por externalReference (deposit UUID)
+    let depositResult = await client.query(
+      `SELECT * FROM deposits WHERE provider_reference = $1 FOR UPDATE`,
+      [event.paymentId]
     );
+    if (!depositResult.rows.length && event.externalReference) {
+      depositResult = await client.query(
+        `SELECT * FROM deposits WHERE id = $1 FOR UPDATE`,
+        [event.externalReference]
+      );
+    }
 
     if (!depositResult.rows.length) {
       await client.query('ROLLBACK');
@@ -174,27 +117,29 @@ router.post('/infinitepay/webhook/:token', webhookLimiter, async (req, res) => {
     }
 
     const deposit = depositResult.rows[0];
+
+    // Idempotência: já confirmado, ignora
     if (deposit.status === 'confirmed') {
       await client.query('ROLLBACK');
       return res.json({ ok: true, message: 'Deposito ja processado' });
     }
 
+    // Status não-confirmado (pending, failed, overdue): apenas atualiza
     if (event.status !== 'confirmed') {
       await client.query(
-        `UPDATE deposits
-         SET status = $1
-         WHERE id = $2`,
-        [event.status, deposit.id]
+        `UPDATE deposits SET status = $1, provider_payload = provider_payload || $2::jsonb WHERE id = $3`,
+        [event.status, JSON.stringify(event.raw), deposit.id]
       );
       await client.query('COMMIT');
       return res.json({ ok: true, message: `Status ${event.status} registrado` });
     }
 
+    // ── Confirmação do depósito ──────────────────────────────────────────────
     await client.query(
       `UPDATE deposits
-       SET status = 'confirmed'
-       WHERE id = $1`,
-      [deposit.id]
+       SET status = 'confirmed', provider_payload = provider_payload || $1::jsonb
+       WHERE id = $2`,
+      [JSON.stringify(event.raw), deposit.id]
     );
 
     await client.query(
@@ -205,9 +150,7 @@ router.post('/infinitepay/webhook/:token', webhookLimiter, async (req, res) => {
     await processReferralBonus(deposit.user_id, deposit.amount, client);
     await client.query('COMMIT');
 
-    // ── PLD/FT: Monitoramento automático COAF (Lei 9.613/98 Art. 11) ──────────
-    // Verifica se o total mensal do usuário atingiu R$10.000 após este depósito.
-    // Executa após o COMMIT para não bloquear a transação principal.
+    // ── PLD/FT: Monitoramento automático COAF (Lei 9.613/98 Art. 11) ────────
     try {
       const COAF_THRESHOLD = parseFloat(process.env.COAF_THRESHOLD || '10000');
       const monthlyRes = await pool.query(
@@ -240,37 +183,174 @@ router.post('/infinitepay/webhook/:token', webhookLimiter, async (req, res) => {
              VALUES ($1, $2, $3, $4, 'pending')`,
             [deposit.user_id, deposit.id, monthlyTotal, COAF_THRESHOLD]
           );
-          logger.warn('PLD/FT: Flag COAF criado automaticamente', { user_id: deposit.user_id, monthly_total: monthlyTotal, threshold: COAF_THRESHOLD });
+          logger.warn('PLD/FT: Flag COAF criado automaticamente', {
+            user_id: deposit.user_id,
+            monthly_total: monthlyTotal,
+            threshold: COAF_THRESHOLD
+          });
         }
       }
     } catch (coafErr) {
-      // Não-fatal: falha no monitoramento COAF não cancela o depósito
       logger.error('PLD/FT COAF auto-check error', { error: coafErr.message });
     }
-    // ─────────────────────────────────────────────────────────────────────────
+    // ────────────────────────────────────────────────────────────────────────
 
-    const userInfo = await pool.query('SELECT email, username FROM users WHERE id = $1', [deposit.user_id]);
-    if (userInfo.rows.length) {
-      const { sendEmail } = require('../lib/email');
-      const { APP_BRAND } = require('../lib/appConfig');
-      await sendEmail(
-        userInfo.rows[0].email,
-        `Deposito confirmado — ${APP_BRAND}`,
-        `<h1>Ola, ${userInfo.rows[0].username}!</h1>
-         <p>Seu deposito de <strong>R$${parseFloat(deposit.amount).toFixed(2)}</strong> foi confirmado e o saldo ja esta disponivel na sua conta.</p>
-         <p>Boa sorte nas suas previsoes!</p>`
-      );
+    try {
+      const userInfo = await pool.query('SELECT email, username FROM users WHERE id = $1', [deposit.user_id]);
+      if (userInfo.rows.length) {
+        const { sendEmail } = require('../lib/email');
+        const { APP_BRAND } = require('../lib/appConfig');
+        await sendEmail(
+          userInfo.rows[0].email,
+          `Deposito confirmado — ${APP_BRAND}`,
+          `<h1>Ola, ${userInfo.rows[0].username}!</h1>
+           <p>Seu deposito de <strong>R$${parseFloat(deposit.amount).toFixed(2)}</strong> foi confirmado e o saldo ja esta disponivel na sua conta.</p>
+           <p>Boa sorte nas suas previsoes!</p>`
+        );
+      }
+    } catch (emailErr) {
+      logger.error('Email confirmation error', { error: emailErr.message });
     }
 
     res.json({ ok: true, message: 'Deposito confirmado' });
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
+    logger.error('Asaas webhook error', { error: err.message });
     res.status(500).json({ error: err.message });
   } finally {
     client.release();
   }
 });
 
+// ── POST /deposits/asaas/checkout ────────────────────────────────────────────
+router.post('/asaas/checkout', auth, requireRiskTerm, requireKyc, requireSuitability, async (req, res) => {
+  const client = await pool.connect();
+
+  try {
+    const amount = parseFloat(req.body.amount || 0);
+    if (!amount || amount < MIN_DEPOSIT) {
+      return res.status(400).json({ error: `Valor minimo de deposito e R$${MIN_DEPOSIT}` });
+    }
+
+    const userResult = await client.query(
+      'SELECT id, username, email, cpf, full_name, asaas_customer_id FROM users WHERE id = $1',
+      [req.user.id]
+    );
+    if (!userResult.rows.length) {
+      return res.status(404).json({ error: 'Usuario nao encontrado' });
+    }
+
+    const user = userResult.rows[0];
+
+    if (!user.cpf) {
+      return res.status(422).json({
+        error: 'CPF_REQUIRED',
+        message: 'Complete seu KYC para depositar via PIX. CPF nao encontrado.'
+      });
+    }
+
+    // Garante customer no Asaas (cria se necessário)
+    let customerId;
+    try {
+      customerId = await ensureCustomer({
+        asaasCustomerId: user.asaas_customer_id,
+        name: user.full_name || user.username,
+        cpf: user.cpf,
+        email: user.email
+      });
+    } catch (err) {
+      logger.error('Asaas ensureCustomer error', { error: err.message, user_id: user.id });
+      return res.status(502).json({ error: 'Gateway de pagamento indisponivel. Tente novamente.' });
+    }
+
+    // Salva o customer_id se é novo
+    if (customerId !== user.asaas_customer_id) {
+      await pool.query('UPDATE users SET asaas_customer_id = $1 WHERE id = $2', [customerId, user.id]);
+    }
+
+    // Cria o depósito no banco e a cobrança no Asaas
+    await client.query('BEGIN');
+
+    const depositResult = await client.query(
+      `INSERT INTO deposits (user_id, amount, status, method)
+       VALUES ($1, $2, 'pending', 'asaas')
+       RETURNING *`,
+      [user.id, amount]
+    );
+    const deposit = depositResult.rows[0];
+
+    let charge;
+    try {
+      charge = await createPixCharge({
+        customerId,
+        amount,
+        externalReference: deposit.id,
+        description: 'Deposito Bubuya'
+      });
+    } catch (err) {
+      await client.query('ROLLBACK');
+      logger.error('Asaas createPixCharge error', { error: err.message, user_id: user.id });
+      return res.status(502).json({ error: 'Gateway de pagamento indisponivel. Tente novamente.' });
+    }
+
+    await client.query(
+      `UPDATE deposits
+       SET provider_reference = $1, provider_payload = $2::jsonb
+       WHERE id = $3`,
+      [charge.id, JSON.stringify(charge), deposit.id]
+    );
+    await client.query('COMMIT');
+
+    // Busca QR Code (fora da transação — read-only)
+    let pix = null;
+    try {
+      const qr = await getPixQrCode(charge.id);
+      pix = {
+        qr_code: qr.payload,
+        qr_code_image: qr.encodedImage
+      };
+    } catch (err) {
+      logger.error('Asaas getPixQrCode error', { error: err.message, paymentId: charge.id });
+      // Depósito e cobrança já existem — não reverter
+      return res.status(207).json({
+        ok: true,
+        deposit,
+        pix: null,
+        warning: 'QR Code temporariamente indisponivel. O deposito foi criado e sera confirmado automaticamente apos o pagamento.'
+      });
+    }
+
+    logger.info('Asaas checkout created', {
+      deposit_id: deposit.id,
+      payment_id: charge.id,
+      amount,
+      user_id: user.id
+    });
+
+    res.json({ ok: true, deposit, pix });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    logger.error('Asaas checkout error', { error: err.message });
+    res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
+  }
+});
+
+// ── GET /deposits/my ──────────────────────────────────────────────────────────
+router.get('/my', auth, async (req, res) => {
+  try {
+    const result = await pool.query(
+      'SELECT * FROM deposits WHERE user_id = $1 ORDER BY created_at DESC',
+      [req.user.id]
+    );
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── POST /deposits (depósito manual — admin) ──────────────────────────────────
 router.post('/', auth, async (req, res) => {
   try {
     const { amount, code, method } = req.body;
@@ -290,76 +370,18 @@ router.post('/', auth, async (req, res) => {
   }
 });
 
-router.post('/infinitepay/checkout', auth, requireRiskTerm, requireKyc, requireSuitability, async (req, res) => {
-  const client = await pool.connect();
-
-  try {
-    const amount = parseFloat(req.body.amount || 0);
-    if (!amount || amount < MIN_DEPOSIT) {
-      return res.status(400).json({ error: `Valor minimo de deposito e R$${MIN_DEPOSIT}` });
-    }
-
-    const userResult = await client.query(
-      'SELECT id, username, email FROM users WHERE id = $1',
-      [req.user.id]
-    );
-    if (!userResult.rows.length) {
-      return res.status(404).json({ error: 'Usuario nao encontrado' });
-    }
-
-    const orderNsu = `INF-${req.user.id.slice(0, 8)}-${Date.now()}`;
-    const token = process.env.INFINITEPAY_WEBHOOK_TOKEN;
-    const backendUrl = process.env.BACKEND_URL || 'https://preditivo-backend-production.up.railway.app';
-    const webhookUrl = token ? `${backendUrl}/deposits/infinitepay/webhook/${token}` : undefined;
-    const checkout = await createCheckoutLink({ amount, webhookUrl });
-
-    await client.query('BEGIN');
-    const depositResult = await client.query(
-      `INSERT INTO deposits (user_id, amount, code, status, method)
-       VALUES ($1, $2, $3, 'pending', 'infinitepay')
-       RETURNING *`,
-      [req.user.id, amount, orderNsu]
-    );
-    await client.query('COMMIT');
-
-    res.json({
-      ok: true,
-      deposit: depositResult.rows[0],
-      checkout_url: checkout.checkoutUrl
-    });
-  } catch (err) {
-    await client.query('ROLLBACK').catch(() => {});
-    res.status(500).json({ error: err.message });
-  } finally {
-    client.release();
-  }
-});
-
-router.get('/my', auth, async (req, res) => {
-  try {
-    const result = await pool.query(
-      'SELECT * FROM deposits WHERE user_id = $1 ORDER BY created_at DESC',
-      [req.user.id]
-    );
-    res.json(result.rows);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
+// ── Referral bonus helper ─────────────────────────────────────────────────────
 async function processReferralBonus(userId, amount, db = pool) {
   try {
     if (parseFloat(amount) < REFERRAL_MIN_DEPOSIT) return;
 
-    // UPDATE atômico: só marca first_deposit_done se ainda era FALSE e há referral.
-    // Evita double-bonus em webhooks duplicados/paralelos (TOCTOU fix).
     const claim = await db.query(
       `UPDATE users SET first_deposit_done = TRUE
        WHERE id = $1 AND first_deposit_done = FALSE AND referred_by IS NOT NULL
        RETURNING referred_by`,
       [userId]
     );
-    if (!claim.rows.length) return; // já processado ou sem referral
+    if (!claim.rows.length) return;
 
     const referrerId = claim.rows[0].referred_by;
 
@@ -378,7 +400,7 @@ async function processReferralBonus(userId, amount, db = pool) {
       [referrerId, userId, 'deposit', REFERRER_BONUS, REFERRED_BONUS]
     );
   } catch (err) {
-    console.error('Referral bonus error:', err.message);
+    logger.error('Referral bonus error', { error: err.message });
   }
 }
 

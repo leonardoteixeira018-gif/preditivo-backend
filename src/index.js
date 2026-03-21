@@ -151,12 +151,12 @@ app.use('/admin', require('./routes/admin-auth')); // Login/logout (sem auth)
 app.use('/admin', require('./routes/admin'));       // Todas as outras rotas (exige auth)
 
 // Webhook: limiter específico
-app.use('/deposits/infinitepay/webhook', webhookLimiter);
+app.use('/deposits/asaas/webhook', webhookLimiter);
 
 // Rate limiters por usuário para rotas autenticadas críticas
 app.use('/bets', betUserLimiter);
 app.use('/withdrawals', withdrawalUserLimiter);
-app.use('/deposits/infinitepay/checkout', depositUserLimiter);
+app.use('/deposits/asaas/checkout', depositUserLimiter);
 
 // General limiter para todas as demais rotas (não afeta /admin)
 app.use(generalLimiter);
@@ -228,6 +228,8 @@ app.listen(PORT, async () => {
   await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS bonus_bets_count INTEGER NOT NULL DEFAULT 0").catch(() => {});
   await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS wallet_address VARCHAR(42)").catch(() => {});
   await pool.query('ALTER TABLE deposits ADD COLUMN IF NOT EXISTS provider_reference TEXT').catch(() => {});
+  await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS asaas_customer_id TEXT').catch(() => {});
+  await pool.query('CREATE INDEX IF NOT EXISTS idx_users_asaas_customer_id ON users(asaas_customer_id) WHERE asaas_customer_id IS NOT NULL').catch(() => {});
   await pool.query('ALTER TABLE deposits ADD COLUMN IF NOT EXISTS provider_status TEXT').catch(() => {});
   await pool.query('ALTER TABLE deposits ADD COLUMN IF NOT EXISTS provider_payload JSONB NOT NULL DEFAULT \'{}\'::jsonb').catch(() => {});
   await pool.query(`
