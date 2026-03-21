@@ -27,7 +27,6 @@ const MIN_DEPOSIT = 5;
 // Configure ASAAS_WEBHOOK_TOKEN no Railway com o mesmo valor configurado no
 // painel Asaas em Configurações > Notificações.
 function validateAsaasWebhook(req) {
-  const token = req.body?.['$asaas_access_token'];
   const expected = process.env.ASAAS_WEBHOOK_TOKEN;
 
   if (!expected) {
@@ -39,8 +38,19 @@ function validateAsaasWebhook(req) {
     return true;
   }
 
+  // Asaas envia o token no header 'asaas-access-token' OU no body como '$asaas_access_token'
+  const token =
+    req.headers['asaas-access-token'] ||
+    req.headers['access_token'] ||
+    req.body?.['$asaas_access_token'] ||
+    req.body?.accessToken ||
+    null;
+
   if (!token) {
-    logger.warn('[SECURITY] Webhook Asaas rejeitado: token ausente no payload');
+    logger.warn('[SECURITY] Webhook Asaas rejeitado: token ausente', {
+      headers: Object.keys(req.headers),
+      bodyKeys: Object.keys(req.body || {})
+    });
     return false;
   }
 
