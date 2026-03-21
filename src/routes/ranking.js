@@ -28,6 +28,7 @@ router.get('/', async (req, res) => {
       SELECT
         u.id,
         u.username AS name,
+        u.avatar_url,
         u.rank_total_bets,
         u.rank_profit,
         u.rank_win_rate,
@@ -41,6 +42,7 @@ router.get('/', async (req, res) => {
       GROUP BY
         u.id,
         u.username,
+        u.avatar_url,
         u.rank_total_bets,
         u.rank_profit,
         u.rank_win_rate
@@ -57,6 +59,7 @@ router.get('/', async (req, res) => {
       return {
         id: row.id,
         name: row.name,
+        avatar_url: row.avatar_url || null,
         total_bets: Math.max(actualBets, parseInt(row.rank_total_bets || synthetic.total_bets, 10)),
         total_profit: Math.max(actualProfit, parseFloat(row.rank_profit || synthetic.total_profit)),
         win_rate: Math.max(actualWinRate, parseFloat(row.rank_win_rate || synthetic.win_rate))
