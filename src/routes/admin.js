@@ -7,6 +7,7 @@ const logger = require('../lib/logger');
 const cache = require('../lib/cache');
 const { validateCPF } = require('../lib/kyc');
 const { verifyCPF } = require('../lib/kyc-bureau');
+const { encryptCPF, decryptCPF, cpfHmac } = require('../lib/cpf-crypto');
 const { runFullScreening, screenPEP, screenSanctions } = require('../lib/pep-screening');
 const { validateAnswers, calculateProfile, calcExpiresAt } = require('../lib/suitability');
 const { logAdminAction } = require('../lib/adminAudit');
@@ -1630,9 +1631,12 @@ router.get('/users/:userId/compliance', async (req, res) => {
       return res.status(404).json({ error: 'Usuário não encontrado' });
     }
 
+    const userDetail = { ...userRes.rows[0] };
+    try { userDetail.cpf = decryptCPF(userDetail.cpf); } catch (_) { userDetail.cpf = null; }
+
     res.json({
       ok: true,
-      user: userRes.rows[0],
+      user: userDetail,
       kyc_reviews: kycRes.rows,
       pep_reviews: pepRes.rows,
       coaf_flags: coafRes.rows,
@@ -1905,9 +1909,13 @@ router.post('/simulate/kyc', async (req, res) => {
         : finalStatus === 'submitted' ? 'submitted'
         : 'rejected';
 
+      const encCpf  = encryptCPF(cpf);
+      const hmacCpf = cpfHmac(cpf);
+
       await pool.query(
         `UPDATE users SET
           cpf = $1,
+          cpf_hmac = $7,
           full_name = $2,
           date_of_birth = $3,
           kyc_status = $4,
@@ -1918,7 +1926,7 @@ router.post('/simulate/kyc', async (req, res) => {
           last_reviewed_at = NOW(),
           reviewed_by = 'admin_sandbox'
         WHERE id = $6`,
-        [cpf, full_name.trim(), date_of_birth, kycStatus, bureauResult.providerId, user_id]
+        [encCpf, full_name.trim(), date_of_birth, kycStatus, bureauResult.providerId, user_id, hmacCpf]
       );
       logger.info('[SANDBOX] KYC simulado e aplicado', { user_id, finalStatus });
     }
@@ -2277,18 +2285,22 @@ router.post('/simulate/kyc', async (req, res) => {
     // Aplicar ao DB se solicitado
     if (apply) {
       const now = new Date().toISOString();
+      const encCpf  = encryptCPF(cleanedCpf);
+      const hmacCpf = cpfHmac(cleanedCpf);
       const updateFields = finalStatus === 'approved'
         ? `kyc_status = 'approved', kyc_approved_at = $2, kyc_submitted_at = $2,
-           cpf = $3, full_name = $4, date_of_birth = $5, kyc_provider_id = $6`
+           cpf = $3, cpf_hmac = $7, full_name = $4, date_of_birth = $5, kyc_provider_id = $6`
         : finalStatus === 'rejected'
         ? `kyc_status = 'rejected', kyc_rejected_at = $2, kyc_rejection_reason = $6,
-           cpf = $3, full_name = $4, date_of_birth = $5`
+           cpf = $3, cpf_hmac = $7, full_name = $4, date_of_birth = $5`
         : `kyc_status = 'submitted', kyc_submitted_at = $2,
-           cpf = $3, full_name = $4, date_of_birth = $5`;
+           cpf = $3, cpf_hmac = $7, full_name = $4, date_of_birth = $5`;
 
       await pool.query(
         `UPDATE users SET ${updateFields} WHERE id = $1`,
-        [user_id, now, cleanedCpf, full_name, date_of_birth || null, bureauResult.providerId || (finalStatus === 'rejected' ? bureauResult.rejectionReason : null)]
+        [user_id, now, encCpf, full_name, date_of_birth || null,
+          bureauResult.providerId || (finalStatus === 'rejected' ? bureauResult.rejectionReason : null),
+          hmacCpf]
       );
 
       await pool.query(
@@ -2774,7 +2786,8 @@ router.get('/lgpd/deletion-requests', async (req, res) => {
        JOIN users u ON u.id = r.user_id
        ORDER BY r.requested_at DESC`
     );
-    res.json({ ok: true, requests: result.rows });
+    const requests = result.rows.map(r => ({ ...r, cpf: decryptCPF(r.cpf) }));
+    res.json({ ok: true, requests });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -2804,6 +2817,7 @@ router.post('/lgpd/deletion-requests/:id/approve', async (req, res) => {
          username = $2,
          full_name = $3,
          cpf = NULL,
+         cpf_hmac = NULL,
          date_of_birth = NULL,
          password_hash = 'DELETED',
          two_fa_secret = NULL,

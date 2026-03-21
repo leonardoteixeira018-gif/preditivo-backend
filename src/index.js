@@ -161,6 +161,36 @@ app.use('/deposits/asaas/checkout', depositUserLimiter);
 // General limiter para todas as demais rotas (não afeta /admin)
 app.use(generalLimiter);
 
+// ── CSRF protection (double-submit cookie) ──────────────────────────────────
+// Protege endpoints autenticados de state-changing contra CSRF.
+// O frontend deve:
+//   1. Chamar GET /auth/csrf-token para obter e armazenar o token no cookie
+//   2. Incluir header X-CSRF-Token em todas as requisições POST/PUT/DELETE autenticadas
+function csrfProtect(req, res, next) {
+  // Só valida se houver cookie de autenticação (requisições autenticadas)
+  if (!req.cookies?.auth_token) return next();
+  // Webhooks são isentos (sem cookie de auth)
+  const headerToken  = req.headers['x-csrf-token'];
+  const cookieToken  = req.cookies?.csrf_token;
+  if (!headerToken || !cookieToken) {
+    return res.status(403).json({ error: 'CSRF_TOKEN_MISSING', message: 'Token CSRF ausente. Recarregue a página.' });
+  }
+  try {
+    const a = Buffer.from(headerToken);
+    const b = Buffer.from(cookieToken);
+    if (a.length !== b.length || !require('crypto').timingSafeEqual(a, b)) {
+      return res.status(403).json({ error: 'CSRF_TOKEN_INVALID', message: 'Token CSRF inválido. Recarregue a página.' });
+    }
+  } catch {
+    return res.status(403).json({ error: 'CSRF_TOKEN_INVALID', message: 'Token CSRF inválido.' });
+  }
+  next();
+}
+
+app.use(['/withdrawals', '/kyc/submit', '/deposits/asaas/checkout',
+         '/auth/change-password', '/auth/2fa', '/auth/self-exclude',
+         '/auth/request-data-deletion'], csrfProtect);
+
 app.use('/auth', require('./routes/auth'));
 app.use('/markets', require('./routes/markets'));
 app.use('/bets', require('./routes/bets'));
@@ -232,6 +262,9 @@ app.listen(PORT, async () => {
   await pool.query('ALTER TABLE deposits ADD COLUMN IF NOT EXISTS provider_reference TEXT').catch(() => {});
   await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS asaas_customer_id TEXT').catch(() => {});
   await pool.query('CREATE INDEX IF NOT EXISTS idx_users_asaas_customer_id ON users(asaas_customer_id) WHERE asaas_customer_id IS NOT NULL').catch(() => {});
+  // CPF criptografado — LGPD Art. 46 (cpf_hmac para busca de duplicatas, cpf armazena AES-256-GCM)
+  await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS cpf_hmac TEXT').catch(() => {});
+  await pool.query('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_cpf_hmac ON users(cpf_hmac) WHERE cpf_hmac IS NOT NULL').catch(() => {});
   await pool.query('ALTER TABLE deposits ADD COLUMN IF NOT EXISTS provider_status TEXT').catch(() => {});
   await pool.query('ALTER TABLE deposits ADD COLUMN IF NOT EXISTS provider_payload JSONB NOT NULL DEFAULT \'{}\'::jsonb').catch(() => {});
   await pool.query(`

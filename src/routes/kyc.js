@@ -21,6 +21,7 @@ const logger = require('../lib/logger');
 const { logUserAction } = require('../lib/user-audit');
 const { validateCPF, maskCPF, KYC_STATUS } = require('../lib/kyc');
 const { verifyCPF, verifyDocument } = require('../lib/kyc-bureau');
+const { encryptCPF, decryptCPF, cpfHmac } = require('../lib/cpf-crypto');
 const { runFullScreening } = require('../lib/pep-screening');
 const adminAuth = require('../middleware/adminAuth'); // JWT Bearer admin obrigatório
 const { createDiditSession, getSessionDecision, verifyWebhookSignature, mapDiditStatus } = require('../lib/didit-bureau');
@@ -121,10 +122,10 @@ router.post('/submit', auth, async (req, res) => {
       return res.status(400).json({ error: cpfValidation.error });
     }
 
-    // Verifica se CPF já está em uso por outro usuário
+    // Verifica se CPF já está em uso por outro usuário (usa HMAC para busca segura)
     const cpfExists = await pool.query(
-      'SELECT id FROM users WHERE cpf = $1 AND id != $2',
-      [cpfValidation.cleaned, req.user.id]
+      'SELECT id FROM users WHERE cpf_hmac = $1 AND id != $2',
+      [cpfHmac(cpfValidation.cleaned), req.user.id]
     );
     if (cpfExists.rows.length) {
       logger.warn('KYC CPF duplicate attempt', {
@@ -169,15 +170,15 @@ router.post('/submit', auth, async (req, res) => {
         });
       }
 
-      // 2. Sessão criada com sucesso → agora salva no DB
+      // 2. Sessão criada com sucesso → agora salva no DB (CPF criptografado — LGPD Art. 46)
       await pool.query(`
         UPDATE users SET
-          cpf = $1, full_name = $2, date_of_birth = $3,
+          cpf = $1, cpf_hmac = $2, full_name = $3, date_of_birth = $4,
           kyc_status = 'submitted', kyc_submitted_at = NOW(),
           kyc_rejected_at = NULL, kyc_rejection_reason = NULL,
-          kyc_provider_id = $4
-        WHERE id = $5
-      `, [cpfValidation.cleaned, full_name.trim(), date_of_birth, session.session_id, req.user.id]);
+          kyc_provider_id = $5
+        WHERE id = $6
+      `, [encryptCPF(cpfValidation.cleaned), cpfHmac(cpfValidation.cleaned), full_name.trim(), date_of_birth, session.session_id, req.user.id]);
 
       await pool.query(`
         INSERT INTO kyc_reviews (user_id, action, actor, notes, provider, provider_id)
@@ -225,20 +226,22 @@ router.post('/submit', auth, async (req, res) => {
         provider: bureauResult.provider
       });
 
-      // Salva CPF e rejeita imediatamente
+      // Salva CPF (criptografado — LGPD Art. 46) e rejeita imediatamente
       await pool.query(`
         UPDATE users SET
           cpf = $1,
-          full_name = $2,
-          date_of_birth = $3,
+          cpf_hmac = $2,
+          full_name = $3,
+          date_of_birth = $4,
           kyc_status = 'rejected',
           kyc_submitted_at = NOW(),
           kyc_rejected_at = NOW(),
-          kyc_rejection_reason = $4,
-          kyc_provider_id = $5
-        WHERE id = $6
+          kyc_rejection_reason = $5,
+          kyc_provider_id = $6
+        WHERE id = $7
       `, [
-        cpfValidation.cleaned,
+        encryptCPF(cpfValidation.cleaned),
+        cpfHmac(cpfValidation.cleaned),
         full_name.trim(),
         date_of_birth,
         bureauResult.rejectionReason,
@@ -269,20 +272,22 @@ router.post('/submit', auth, async (req, res) => {
       });
     }
 
-    // Salva dados e atualiza status para 'submitted'
+    // Salva dados e atualiza status para 'submitted' (CPF criptografado — LGPD Art. 46)
     await pool.query(`
       UPDATE users SET
         cpf = $1,
-        full_name = $2,
-        date_of_birth = $3,
+        cpf_hmac = $2,
+        full_name = $3,
+        date_of_birth = $4,
         kyc_status = 'submitted',
         kyc_submitted_at = NOW(),
-        kyc_provider_id = $4,
+        kyc_provider_id = $5,
         kyc_rejected_at = NULL,
         kyc_rejection_reason = NULL
-      WHERE id = $5
+      WHERE id = $6
     `, [
-      cpfValidation.cleaned,
+      encryptCPF(cpfValidation.cleaned),
+      cpfHmac(cpfValidation.cleaned),
       full_name.trim(),
       date_of_birth,
       bureauResult.providerId,
@@ -560,7 +565,7 @@ router.post('/didit/webhook', express.raw({ type: 'application/json' }), async (
         if (userRow.rows[0]?.cpf) {
           const screening = await runFullScreening({
             userId,
-            cpf:      userRow.rows[0].cpf,
+            cpf:      decryptCPF(userRow.rows[0].cpf),
             fullName: userRow.rows[0].full_name,
           });
 
@@ -656,7 +661,8 @@ router.get('/admin/approved', adminAuth, async (req, res) => {
       ORDER BY u.kyc_approved_at DESC
       LIMIT 200
     `);
-    res.json({ ok: true, count: result.rows.length, users: result.rows });
+    const users = result.rows.map(u => ({ ...u, cpf: decryptCPF(u.cpf) }));
+    res.json({ ok: true, count: users.length, users });
   } catch (err) {
     logger.error('KYC admin approved list error', { error: err.message });
     res.status(500).json({ error: 'Erro interno do servidor' });
@@ -701,7 +707,8 @@ router.get('/admin/pending', adminAuth, async (req, res) => {
       ORDER BY has_bureau_alert DESC, u.pep_status DESC, u.kyc_submitted_at ASC
     `);
 
-    res.json({ ok: true, count: result.rows.length, users: result.rows });
+    const users = result.rows.map(u => ({ ...u, cpf: decryptCPF(u.cpf) }));
+    res.json({ ok: true, count: users.length, users });
   } catch (err) {
     logger.error('KYC admin pending list error', { error: err.message });
     res.status(500).json({ error: 'Erro interno do servidor' });
@@ -900,7 +907,7 @@ router.get('/admin/coaf-flags/:id/siscoaf-report', adminAuth, async (req, res) =
 
     if (!result.rows.length) return res.status(404).json({ error: 'Flag COAF não encontrado' });
 
-    const f = result.rows[0];
+    const f = { ...result.rows[0], cpf: decryptCPF(result.rows[0].cpf) };
     const periodo = f.created_at ? new Date(f.created_at).toISOString().substring(0, 7) : new Date().toISOString().substring(0, 7);
 
     const doc = {
@@ -1014,6 +1021,73 @@ router.get('/admin/pep', adminAuth, async (req, res) => {
     res.json({ ok: true, count: result.rows.length, users: result.rows });
   } catch (err) {
     logger.error('KYC admin PEP list error', { error: err.message });
+    res.status(500).json({ error: 'Erro interno do servidor' });
+  }
+});
+
+/**
+ * POST /kyc/admin/:userId/reset
+ * Reseta o KYC de um usuário para que ele possa reenviar os dados.
+ * Limpa CPF, nome completo, data de nascimento e status de volta para NULL.
+ * Use quando o usuário enviou dados errados ou precisa recomeçar o processo.
+ * Body: { reason: string } — motivo para auditoria
+ */
+router.post('/admin/:userId/reset', adminAuth, async (req, res) => {
+  const { userId } = req.params;
+  const { reason } = req.body;
+
+  if (!reason) {
+    return res.status(400).json({ error: 'Motivo do reset é obrigatório (campo: reason)' });
+  }
+
+  try {
+    const user = await pool.query(
+      'SELECT id, username, kyc_status FROM users WHERE id = $1',
+      [userId]
+    );
+    if (!user.rows.length) {
+      return res.status(404).json({ error: 'Usuário não encontrado' });
+    }
+
+    const previousStatus = user.rows[0].kyc_status;
+
+    await pool.query(`
+      UPDATE users SET
+        kyc_status            = NULL,
+        cpf                   = NULL,
+        cpf_hmac              = NULL,
+        full_name             = NULL,
+        date_of_birth         = NULL,
+        kyc_submitted_at      = NULL,
+        kyc_approved_at       = NULL,
+        kyc_rejected_at       = NULL,
+        kyc_rejection_reason  = NULL,
+        kyc_provider_id       = NULL,
+        pep_status            = NULL,
+        pep_checked_at        = NULL,
+        sanctions_status      = NULL,
+        sanctions_checked_at  = NULL
+      WHERE id = $1
+    `, [userId]);
+
+    await pool.query(`
+      INSERT INTO kyc_reviews (user_id, action, actor, notes)
+      VALUES ($1, 'reset', 'admin', $2)
+    `, [userId, `Reset solicitado pelo admin. Status anterior: ${previousStatus || 'nenhum'}. Motivo: ${reason}`]);
+
+    logger.warn('KYC reset by admin', {
+      targetUserId: userId,
+      username: user.rows[0].username,
+      previousStatus,
+      reason
+    });
+
+    res.json({
+      ok: true,
+      message: `KYC de ${user.rows[0].username} foi resetado. O usuário poderá reenviar os dados de verificação.`
+    });
+  } catch (err) {
+    logger.error('KYC admin reset error', { userId, error: err.message });
     res.status(500).json({ error: 'Erro interno do servidor' });
   }
 });

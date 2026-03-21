@@ -1,11 +1,19 @@
+const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const pool = require('./db');
 const { sendEmail } = require('./email');
 
 const CODE_EXPIRATION_MINUTES = 10;
 
+/**
+ * Gera um código OTP de 6 dígitos usando crypto.randomBytes (CSPRNG).
+ * Math.random() é pseudoaleatório e inadequado para tokens de segurança.
+ */
 function generateVerificationCode() {
-  return String(Math.floor(100000 + Math.random() * 900000));
+  // Gera 3 bytes aleatórios (24 bits) → int [0, 16777215]
+  // Módulo 900000 reduz bias para < 0.1% — aceitável para OTP de 6 dígitos
+  const randomInt = crypto.randomBytes(3).readUIntBE(0, 3) % 900000;
+  return String(100000 + randomInt);
 }
 
 async function createEmailVerification({

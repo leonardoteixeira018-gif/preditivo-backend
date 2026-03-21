@@ -3,6 +3,7 @@ const pool = require('../lib/db');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const logger = require('../lib/logger');
+const { decryptCPF } = require('../lib/cpf-crypto');
 const auth = require('../middleware/auth');
 const { createEmailVerification, consumeEmailVerification } = require('../lib/emailVerification');
 const { APP_BRAND } = require('../lib/appConfig');
@@ -46,8 +47,14 @@ async function send2faCode(user) {
   });
 }
 
+const crypto = require('crypto');
+
+/**
+ * Gera código de referral criptograficamente seguro.
+ * Formato: prefixo com até 4 chars do username + 4 hex chars aleatórios (CSPRNG).
+ */
 function generateCode(username) {
-  const rand = Math.random().toString(36).substring(2, 6).toUpperCase();
+  const rand = crypto.randomBytes(2).toString('hex').toUpperCase(); // 4 hex chars
   return (String(username || '').substring(0, 4).toUpperCase() + rand).substring(0, 8);
 }
 
@@ -662,9 +669,12 @@ router.get('/my-data', auth, async (req, res) => {
 
     logger.info('LGPD my-data accessed', { userId, ip: req.ip });
 
+    const userData = { ...userRes.rows[0] };
+    try { userData.cpf = decryptCPF(userData.cpf); } catch (_) { userData.cpf = null; }
+
     res.json({
       ok: true,
-      user: userRes.rows[0],
+      user: userData,
       bets: betsRes.rows,
       deposits: depositsRes.rows,
       withdrawals: withdrawalsRes.rows,
@@ -1129,6 +1139,30 @@ router.get('/complaints/:id/attachment/:attId', auth, async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: 'Erro interno' });
   }
+});
+
+// ── CSRF token ────────────────────────────────────────────────────────────────
+
+/**
+ * GET /auth/csrf-token
+ * Gera um token CSRF aleatório (double-submit cookie).
+ * O frontend deve:
+ *   1. Chamar este endpoint ao carregar a página (qualquer rota autenticada)
+ *   2. Incluir o header X-CSRF-Token em todas as requisições POST/PUT/DELETE
+ *
+ * O token é armazenado como cookie csrf_token (SameSite=Strict, NOT httpOnly)
+ * para que o JavaScript possa lê-lo e incluí-lo no header.
+ */
+router.get('/csrf-token', (req, res) => {
+  const token = crypto.randomBytes(32).toString('hex');
+  res.cookie('csrf_token', token, {
+    httpOnly: false,       // JS precisa ler para incluir no header
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'strict',    // Protege contra leitura cross-origin de cookies
+    path: '/',
+    maxAge: 4 * 60 * 60 * 1000 // 4 horas
+  });
+  res.json({ ok: true, csrf_token: token });
 });
 
 module.exports = router;

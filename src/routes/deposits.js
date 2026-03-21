@@ -1,6 +1,7 @@
 const crypto = require('crypto');
 const rateLimit = require('express-rate-limit');
 const router = require('express').Router();
+const { decryptCPF } = require('../lib/cpf-crypto');
 const pool = require('../lib/db');
 const logger = require('../lib/logger');
 const auth = require('../middleware/auth');
@@ -289,13 +290,16 @@ router.post('/asaas/checkout', auth, requireRiskTerm, requireKyc, requireSuitabi
       });
     }
 
+    // Descriptografa CPF para envio ao Asaas (armazenado criptografado — LGPD Art. 46)
+    const cpfPlain = decryptCPF(user.cpf);
+
     // Garante customer no Asaas (cria se necessário)
     let customerId;
     try {
       customerId = await ensureCustomer({
         asaasCustomerId: user.asaas_customer_id,
         name: user.full_name || user.username,
-        cpf: user.cpf,
+        cpf: cpfPlain,
         email: user.email
       });
     } catch (err) {

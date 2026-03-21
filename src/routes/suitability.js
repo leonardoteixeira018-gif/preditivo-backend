@@ -267,4 +267,62 @@ router.post('/admin/:userId/override', adminAuth, async (req, res) => {
   }
 });
 
+/**
+ * POST /suitability/admin/:userId/reset
+ * Reseta o perfil de suitability de um usuário para que ele refaça o questionário.
+ * Body: { reason: string }
+ */
+router.post('/admin/:userId/reset', adminAuth, async (req, res) => {
+  const { userId } = req.params;
+  const { reason } = req.body;
+
+  if (!reason) {
+    return res.status(400).json({ error: 'Motivo do reset é obrigatório (campo: reason)' });
+  }
+
+  try {
+    const user = await pool.query('SELECT id, username, suitability_profile FROM users WHERE id = $1', [userId]);
+    if (!user.rows.length) {
+      return res.status(404).json({ error: 'Usuário não encontrado' });
+    }
+
+    const previousProfile = user.rows[0].suitability_profile;
+
+    await pool.query(`
+      UPDATE users SET
+        suitability_profile      = NULL,
+        suitability_score        = NULL,
+        suitability_completed_at = NULL,
+        suitability_expires_at   = NULL
+      WHERE id = $1
+    `, [userId]);
+
+    await pool.query(`
+      INSERT INTO suitability_responses
+        (user_id, answers, profile, score, expires_at, overridden_by)
+      VALUES ($1, $2, NULL, NULL, NULL, 'admin_reset')
+    `, [userId, JSON.stringify({ reset: true, reason, previousProfile })]);
+
+    await logUserAction(userId, 'suitability_reset', 'admin', userId, {
+      previousProfile,
+      reason
+    }, null);
+
+    logger.info('Suitability reset by admin', {
+      targetUserId: userId,
+      username: user.rows[0].username,
+      previousProfile,
+      reason
+    });
+
+    res.json({
+      ok: true,
+      message: `Perfil de suitability de ${user.rows[0].username} foi resetado. O usuário deverá refazer o questionário.`
+    });
+  } catch (err) {
+    logger.error('Suitability admin reset error', { userId, error: err.message });
+    res.status(500).json({ error: 'Erro interno do servidor' });
+  }
+});
+
 module.exports = router;
