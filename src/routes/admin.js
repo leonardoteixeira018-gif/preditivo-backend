@@ -2666,6 +2666,216 @@ router.get('/audit-logs', async (req, res) => {
   }
 });
 
+// ── OUVIDORIA (COMPLAINTS) ────────────────────────────────────────────────────
+
+// GET /admin/complaints — lista todas as reclamações
+router.get('/complaints', async (req, res) => {
+  try {
+    const { status, page = 1, limit = 30 } = req.query;
+    const offset = (parseInt(page) - 1) * parseInt(limit);
+
+    const result = await pool.query(
+      `SELECT c.id, c.category, c.status, c.created_at, c.responded_at,
+              u.username, u.email,
+              LEFT(c.description, 100) AS description_preview
+       FROM complaints c
+       JOIN users u ON u.id = c.user_id
+       WHERE ($1::text IS NULL OR c.status = $1)
+       ORDER BY c.created_at DESC
+       LIMIT $2 OFFSET $3`,
+      [status || null, parseInt(limit), offset]
+    );
+
+    const countResult = await pool.query(
+      `SELECT COUNT(*) FROM complaints WHERE ($1::text IS NULL OR status = $1)`,
+      [status || null]
+    );
+
+    res.json({ ok: true, complaints: result.rows, total: parseInt(countResult.rows[0].count) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /admin/complaints/:id — detalhe completo + mensagens
+router.get('/complaints/:id', async (req, res) => {
+  try {
+    const complaint = await pool.query(
+      `SELECT c.*, u.username, u.email
+       FROM complaints c JOIN users u ON u.id = c.user_id
+       WHERE c.id = $1`,
+      [req.params.id]
+    );
+    if (!complaint.rows.length) return res.status(404).json({ error: 'Reclamação não encontrada' });
+
+    const messages = await pool.query(
+      `SELECT id, sender_type, message, is_internal, created_at
+       FROM complaint_messages WHERE complaint_id = $1 ORDER BY created_at ASC`,
+      [req.params.id]
+    );
+
+    res.json({ complaint: complaint.rows[0], messages: messages.rows });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /admin/complaints/:id/respond — admin responde
+router.post('/complaints/:id/respond', async (req, res) => {
+  try {
+    const { message, is_internal = false, new_status } = req.body;
+    if (!message || message.trim().length < 2) {
+      return res.status(400).json({ error: 'Mensagem obrigatória' });
+    }
+
+    const complaint = await pool.query(
+      `SELECT id, status FROM complaints WHERE id = $1`,
+      [req.params.id]
+    );
+    if (!complaint.rows.length) return res.status(404).json({ error: 'Reclamação não encontrada' });
+
+    // Insere mensagem
+    await pool.query(
+      `INSERT INTO complaint_messages (complaint_id, sender_type, message, is_internal)
+       VALUES ($1, 'admin', $2, $3)`,
+      [req.params.id, message.trim(), Boolean(is_internal)]
+    );
+
+    // Atualiza status e resposta pública se não for interna
+    const validStatuses = ['open', 'in_progress', 'closed'];
+    const statusToSet = new_status && validStatuses.includes(new_status) ? new_status : complaint.rows[0].status;
+
+    await pool.query(
+      `UPDATE complaints
+       SET status = $1,
+           admin_response = CASE WHEN $3 = FALSE THEN $2 ELSE admin_response END,
+           responded_at = CASE WHEN $3 = FALSE THEN NOW() ELSE responded_at END,
+           responded_by = $4
+       WHERE id = $5`,
+      [statusToSet, message.trim(), Boolean(is_internal), 'admin', req.params.id]
+    );
+
+    await logAudit('complaint_respond', 'complaint', req.params.id, { status: statusToSet, is_internal });
+    res.json({ ok: true, status: statusToSet });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── LGPD — SOLICITAÇÕES DE EXCLUSÃO ──────────────────────────────────────────
+
+// GET /admin/lgpd/deletion-requests — lista solicitações pendentes
+router.get('/lgpd/deletion-requests', async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT r.id, r.status, r.requested_at, r.notes, r.ip_address,
+              u.username, u.email, u.cpf, u.kyc_status
+       FROM data_deletion_requests r
+       JOIN users u ON u.id = r.user_id
+       ORDER BY r.requested_at DESC`
+    );
+    res.json({ ok: true, requests: result.rows });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /admin/lgpd/deletion-requests/:id/approve — executa anonimização dos dados
+// Mantém registros financeiros (BACEN exige 5 anos), anonimiza PII
+router.post('/lgpd/deletion-requests/:id/approve', async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const req_result = await client.query(
+      `SELECT r.*, u.id AS user_id FROM data_deletion_requests r JOIN users u ON u.id = r.user_id WHERE r.id = $1`,
+      [req.params.id]
+    );
+    if (!req_result.rows.length) return res.status(404).json({ error: 'Solicitação não encontrada' });
+
+    const { user_id } = req_result.rows[0];
+    const anonEmail = `deleted_${user_id.slice(0, 8)}@anonimizado.bubuya`;
+    const anonName = `Usuário Excluído`;
+
+    await client.query('BEGIN');
+
+    // Anonimiza PII — mantém registros financeiros (compliance BACEN)
+    await client.query(
+      `UPDATE users SET
+         email = $1,
+         username = $2,
+         full_name = $3,
+         cpf = NULL,
+         date_of_birth = NULL,
+         password_hash = 'DELETED',
+         two_fa_secret = NULL,
+         two_fa_enabled = FALSE,
+         asaas_customer_id = NULL,
+         avatar_url = NULL,
+         admin_notes = COALESCE(admin_notes, '') || ' [LGPD: conta excluída em ' || NOW()::date || ']'
+       WHERE id = $4`,
+      [anonEmail, anonName, anonName, user_id]
+    );
+
+    // Invalida todos os tokens ativos
+    await client.query(
+      `INSERT INTO blacklisted_tokens (token, expired_at)
+       SELECT token, NOW() FROM (SELECT 'lgpd_bulk_' || gen_random_uuid() AS token) t`
+    );
+
+    // Remove push subscriptions
+    await client.query(`DELETE FROM push_subscriptions WHERE user_id = $1`, [user_id]);
+
+    // Remove verificações de email pendentes
+    await client.query(`DELETE FROM email_verifications WHERE user_id = $1`, [user_id]);
+
+    // Atualiza status da solicitação
+    await client.query(
+      `UPDATE data_deletion_requests SET status = 'completed' WHERE id = $1`,
+      [req.params.id]
+    );
+
+    await client.query('COMMIT');
+
+    await logAudit('lgpd_deletion_approved', 'user', user_id, {
+      request_id: req.params.id,
+      anon_email: anonEmail
+    });
+
+    logger.info('LGPD deletion approved — PII anonymized', { user_id, request_id: req.params.id });
+
+    res.json({ ok: true, message: 'Dados pessoais anonimizados. Registros financeiros mantidos conforme BACEN.' });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    logger.error('LGPD deletion approval error', { error: err.message });
+    res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
+  }
+});
+
+// POST /admin/lgpd/deletion-requests/:id/reject — rejeita solicitação com motivo
+router.post('/lgpd/deletion-requests/:id/reject', async (req, res) => {
+  try {
+    const { reason } = req.body;
+    if (!reason) return res.status(400).json({ error: 'Motivo obrigatório' });
+
+    await pool.query(
+      `UPDATE data_deletion_requests SET status = 'rejected', notes = $1 WHERE id = $2`,
+      [reason, req.params.id]
+    );
+    await pool.query(
+      `UPDATE users SET data_deletion_requested_at = NULL WHERE id = (
+         SELECT user_id FROM data_deletion_requests WHERE id = $1
+       )`,
+      [req.params.id]
+    );
+
+    await logAudit('lgpd_deletion_rejected', 'data_deletion_request', req.params.id, { reason });
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Exporta runBotRound para uso no cron do servidor
 module.exports = router;
 module.exports.runBotRound = runBotRound;

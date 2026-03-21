@@ -172,6 +172,8 @@ app.use('/transak', require('./routes/transak'));
 app.use('/notifications', require('./routes/notifications'));
 app.use('/kyc', require('./routes/kyc'));
 app.use('/suitability', require('./routes/suitability'));
+app.use('/complaints', require('./routes/complaints'));
+app.use('/lgpd', require('./routes/lgpd'));
 
 app.get('/health', async (req, res) => {
   const checks = {
