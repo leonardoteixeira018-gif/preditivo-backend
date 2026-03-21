@@ -52,7 +52,9 @@ function normalizeAsaasEvent(body) {
   let status = 'pending';
   if (['PAYMENT_RECEIVED', 'PAYMENT_CONFIRMED'].includes(event)) {
     status = 'confirmed';
-  } else if (['PAYMENT_OVERDUE', 'PAYMENT_DELETED', 'PAYMENT_REFUNDED'].includes(event)) {
+  } else if (['PAYMENT_REFUNDED', 'PAYMENT_PARTIALLY_REFUNDED'].includes(event)) {
+    status = 'refunded';
+  } else if (['PAYMENT_OVERDUE', 'PAYMENT_DELETED'].includes(event)) {
     status = 'failed';
   }
 
@@ -111,13 +113,58 @@ router.post('/asaas/webhook', webhookLimiter, async (req, res) => {
 
     const deposit = depositResult.rows[0];
 
-    // Idempotência: já confirmado, ignora
+    // ── Estorno de depósito já confirmado ────────────────────────────────────
+    if (deposit.status === 'confirmed' && event.status === 'refunded') {
+      await client.query(
+        `UPDATE deposits SET status = 'refunded', provider_payload = provider_payload || $1::jsonb WHERE id = $2`,
+        [JSON.stringify(event.raw), deposit.id]
+      );
+      // Debita o saldo (não deixa ficar negativo)
+      await client.query(
+        `UPDATE users SET balance = GREATEST(COALESCE(balance, 0) - $1, 0) WHERE id = $2`,
+        [deposit.amount, deposit.user_id]
+      );
+      await client.query('COMMIT');
+
+      logger.warn('Deposito estornado — saldo debitado', {
+        deposit_id: deposit.id,
+        user_id: deposit.user_id,
+        amount: deposit.amount
+      });
+
+      try {
+        const userInfo = await pool.query('SELECT email, username FROM users WHERE id = $1', [deposit.user_id]);
+        if (userInfo.rows.length) {
+          const { sendEmail } = require('../lib/email');
+          const { APP_BRAND } = require('../lib/appConfig');
+          await sendEmail(
+            userInfo.rows[0].email,
+            `Deposito estornado — ${APP_BRAND}`,
+            `<h1>Ola, ${userInfo.rows[0].username}!</h1>
+             <p>Seu deposito de <strong>R$${parseFloat(deposit.amount).toFixed(2)}</strong> foi estornado e o valor foi removido do seu saldo.</p>
+             <p>Em caso de duvidas, entre em contato com o suporte.</p>`
+          );
+        }
+      } catch (emailErr) {
+        logger.error('Email estorno error', { error: emailErr.message });
+      }
+
+      return res.json({ ok: true, message: 'Deposito estornado' });
+    }
+
+    // Idempotência: já confirmado e não é estorno, ignora
     if (deposit.status === 'confirmed') {
       await client.query('ROLLBACK');
       return res.json({ ok: true, message: 'Deposito ja processado' });
     }
 
-    // Status não-confirmado (pending, failed, overdue): apenas atualiza
+    // Já estornado, ignora
+    if (deposit.status === 'refunded') {
+      await client.query('ROLLBACK');
+      return res.json({ ok: true, message: 'Deposito ja estornado' });
+    }
+
+    // Status não-confirmado (pending, failed): apenas atualiza
     if (event.status !== 'confirmed') {
       await client.query(
         `UPDATE deposits SET status = $1, provider_payload = provider_payload || $2::jsonb WHERE id = $3`,
