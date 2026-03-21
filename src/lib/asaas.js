@@ -35,11 +35,19 @@ async function asaasRequest(method, path, body = null) {
 
 /**
  * Retorna o customer_id do Asaas para o usuário.
- * Se já tiver um salvo, retorna direto sem chamar a API.
- * Caso contrário, cria o customer e retorna o novo ID.
+ * Se já tiver um salvo, verifica se ele ainda existe nesse ambiente (prod/sandbox).
+ * Se não existir (ou se o ambiente mudou), cria um novo customer.
  */
 async function ensureCustomer({ asaasCustomerId, name, cpf, email }) {
-  if (asaasCustomerId) return asaasCustomerId;
+  if (asaasCustomerId) {
+    // Verifica se o customer existe no ambiente atual
+    try {
+      await asaasRequest('GET', `/customers/${asaasCustomerId}`);
+      return asaasCustomerId; // existe, reutiliza
+    } catch {
+      // Não existe nesse ambiente (ex: trocou prod ↔ sandbox) — cria novo
+    }
+  }
 
   const data = await asaasRequest('POST', '/customers', {
     name,
