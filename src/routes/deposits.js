@@ -269,13 +269,15 @@ router.post('/asaas/checkout', auth, requireRiskTerm, requireKyc, requireSuitabi
     }
 
     // Cria o depósito no banco e a cobrança no Asaas
+    const depositCode = `ASA-${user.id.slice(0, 8)}-${Date.now()}`;
+
     await client.query('BEGIN');
 
     const depositResult = await client.query(
-      `INSERT INTO deposits (user_id, amount, status, method)
-       VALUES ($1, $2, 'pending', 'asaas')
+      `INSERT INTO deposits (user_id, amount, code, status, method)
+       VALUES ($1, $2, $3, 'pending', 'asaas')
        RETURNING *`,
-      [user.id, amount]
+      [user.id, amount, depositCode]
     );
     const deposit = depositResult.rows[0];
 
