@@ -20,7 +20,7 @@ const webhookLimiter = rateLimit({
 const REFERRAL_MIN_DEPOSIT = 100;
 const REFERRER_BONUS = 50;
 const REFERRED_BONUS = 20;
-const MIN_DEPOSIT = 10;
+const MIN_DEPOSIT = 1;
 
 // ── Asaas webhook validation ─────────────────────────────────────────────────
 // Asaas inclui o campo '$asaas_access_token' no body de cada webhook.
