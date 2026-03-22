@@ -297,11 +297,15 @@ router.post('/admin/:userId/reset', adminAuth, async (req, res) => {
       WHERE id = $1
     `, [userId]);
 
-    await pool.query(`
-      INSERT INTO suitability_responses
-        (user_id, answers, profile, score, expires_at, overridden_by)
-      VALUES ($1, $2, NULL, NULL, NULL, 'admin_reset')
-    `, [userId, JSON.stringify({ reset: true, reason, previousProfile })]);
+    // Registra o reset no histórico de respostas usando o perfil anterior como referência
+    // Não insere profile=NULL pois a coluna pode ter constraint NOT NULL
+    if (previousProfile) {
+      await pool.query(`
+        INSERT INTO suitability_responses
+          (user_id, answers, profile, score, expires_at, overridden_by)
+        VALUES ($1, $2, $3, NULL, NOW(), 'admin_reset')
+      `, [userId, JSON.stringify({ reset: true, reason, previousProfile }), previousProfile]).catch(() => {});
+    }
 
     await logUserAction(userId, 'suitability_reset', 'admin', userId, {
       previousProfile,

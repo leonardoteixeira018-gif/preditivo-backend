@@ -1055,7 +1055,6 @@ router.post('/admin/:userId/reset', adminAuth, async (req, res) => {
       UPDATE users SET
         kyc_status            = NULL,
         cpf                   = NULL,
-        cpf_hmac              = NULL,
         full_name             = NULL,
         date_of_birth         = NULL,
         kyc_submitted_at      = NULL,
@@ -1069,6 +1068,9 @@ router.post('/admin/:userId/reset', adminAuth, async (req, res) => {
         sanctions_checked_at  = NULL
       WHERE id = $1
     `, [userId]);
+
+    // Limpa cpf_hmac separadamente — coluna pode não existir em ambientes sem migration
+    await pool.query('UPDATE users SET cpf_hmac = NULL WHERE id = $1', [userId]).catch(() => {});
 
     await pool.query(`
       INSERT INTO kyc_reviews (user_id, action, actor, notes)
