@@ -1053,7 +1053,7 @@ router.post('/admin/:userId/reset', adminAuth, async (req, res) => {
 
     await pool.query(`
       UPDATE users SET
-        kyc_status            = NULL,
+        kyc_status            = 'pending',
         cpf                   = NULL,
         full_name             = NULL,
         date_of_birth         = NULL,

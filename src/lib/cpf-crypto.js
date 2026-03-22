@@ -14,24 +14,32 @@ const crypto = require('crypto');
 const ALGO = 'aes-256-gcm';
 const ENC_PREFIX = 'enc:';
 
+const logger = (() => {
+  try { return require('./logger'); } catch { return console; }
+})();
+
 function getKey() {
   const hex = process.env.CPF_ENCRYPTION_KEY;
-  if (!hex || hex.length !== 64) {
-    throw new Error(
-      'CPF_ENCRYPTION_KEY não configurada ou inválida. ' +
-      'Gere com: node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'hex\'))"'
-    );
-  }
+  if (!hex || hex.length !== 64) return null; // sem chave → modo plaintext
   return Buffer.from(hex, 'hex');
 }
 
+function isEncryptionEnabled() {
+  return !!getKey();
+}
+
 /**
- * Criptografa um CPF (string de dígitos) com AES-256-GCM.
+ * Criptografa um CPF com AES-256-GCM.
+ * Se CPF_ENCRYPTION_KEY não estiver configurada, armazena em plaintext com aviso.
  * @param {string} cpf — CPF normalizado (somente dígitos)
- * @returns {string} — formato "enc:iv:tag:cipher"
+ * @returns {string} — "enc:iv:tag:cipher" ou plaintext se chave ausente
  */
 function encryptCPF(cpf) {
   const key = getKey();
+  if (!key) {
+    logger.warn('[cpf-crypto] CPF_ENCRYPTION_KEY não configurada — armazenando plaintext. Configure a chave para conformidade LGPD Art. 46.');
+    return cpf; // fallback: plaintext (inseguro, apenas para desenvolvimento)
+  }
   const iv = crypto.randomBytes(12);
   const cipher = crypto.createCipheriv(ALGO, key, iv);
   const encrypted = Buffer.concat([cipher.update(cpf, 'utf8'), cipher.final()]);
@@ -41,17 +49,20 @@ function encryptCPF(cpf) {
 
 /**
  * Descriptografa um CPF armazenado em banco.
- * Suporta tanto valores criptografados ("enc:...") quanto valores legados (plaintext).
+ * Suporta: valores criptografados ("enc:...") e valores legados (plaintext).
  * @param {string|null} stored — valor do banco
  * @returns {string|null} — CPF em plaintext ou null
  */
 function decryptCPF(stored) {
   if (!stored) return null;
   if (!stored.startsWith(ENC_PREFIX)) {
-    // Valor legado (plaintext) — retorna como está
-    return stored;
+    return stored; // Valor legado ou plaintext (sem chave) — retorna como está
   }
   const key = getKey();
+  if (!key) {
+    logger.warn('[cpf-crypto] CPF_ENCRYPTION_KEY não configurada — não é possível descriptografar valor criptografado.');
+    return null;
+  }
   const parts = stored.slice(ENC_PREFIX.length).split(':');
   if (parts.length !== 3) throw new Error('Formato de CPF criptografado inválido');
   const [ivHex, tagHex, dataHex] = parts;
@@ -65,12 +76,16 @@ function decryptCPF(stored) {
 
 /**
  * HMAC-SHA256 determinístico do CPF — usado para busca de duplicatas no banco.
- * Mesmo CPF → mesmo HMAC (diferente do ciphertext que é sempre único).
+ * Se chave ausente, retorna HMAC com chave derivada do CPF (menos seguro mas funcional).
  * @param {string} cpf — CPF normalizado (somente dígitos)
  * @returns {string} — HMAC hex
  */
 function cpfHmac(cpf) {
   const key = getKey();
+  if (!key) {
+    // Sem chave: usa SHA-256 simples para busca de duplicatas (sem HMAC)
+    return crypto.createHash('sha256').update(cpf, 'utf8').digest('hex');
+  }
   return crypto.createHmac('sha256', key).update(cpf, 'utf8').digest('hex');
 }
 
