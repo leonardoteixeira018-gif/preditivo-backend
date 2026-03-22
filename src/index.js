@@ -1,4 +1,4 @@
-// v2026.03.17b — fix: processRollover fora da transação + migrations bonus_locked/bonus_bets_count
+// v2026.03.21 — fix: CSRF bypass para Bearer token; getToken() removido de kyc/suitability
 require('dotenv').config();
 const express = require('express');
 const rateLimit = require('express-rate-limit');
@@ -167,6 +167,8 @@ app.use(generalLimiter);
 //   1. Chamar GET /auth/csrf-token para obter e armazenar o token no cookie
 //   2. Incluir header X-CSRF-Token em todas as requisições POST/PUT/DELETE autenticadas
 function csrfProtect(req, res, next) {
+  // Bearer token auth é inerentemente seguro contra CSRF — isento
+  if (req.headers.authorization?.startsWith('Bearer ')) return next();
   // Só valida se houver cookie de autenticação (requisições autenticadas)
   if (!req.cookies?.auth_token) return next();
   // Webhooks são isentos (sem cookie de auth)
