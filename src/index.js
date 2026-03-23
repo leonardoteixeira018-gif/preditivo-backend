@@ -24,6 +24,8 @@ const allowedOrigins = [
   altOrigin,
   'https://bubuya.com.br',        // Sem www
   'https://www.bubuya.com.br',    // Com www
+  'https://futoro.com.br',        // Novo domínio sem www
+  'https://www.futoro.com.br',    // Novo domínio com www
   'http://localhost:3000',
   'http://localhost:8000'
 ];
