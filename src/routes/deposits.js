@@ -240,13 +240,11 @@ router.post('/asaas/webhook', webhookLimiter, async (req, res) => {
       const userInfo = await pool.query('SELECT email, username FROM users WHERE id = $1', [deposit.user_id]);
       if (userInfo.rows.length) {
         const { sendEmail } = require('../lib/email');
-        const { APP_BRAND } = require('../lib/appConfig');
+        const { depositConfirmedEmail } = require('../lib/emailTemplates');
         await sendEmail(
           userInfo.rows[0].email,
-          `Deposito confirmado — ${APP_BRAND}`,
-          `<h1>Ola, ${userInfo.rows[0].username}!</h1>
-           <p>Seu deposito de <strong>R$${parseFloat(deposit.amount).toFixed(2)}</strong> foi confirmado e o saldo ja esta disponivel na sua conta.</p>
-           <p>Boa sorte nas suas previsoes!</p>`
+          'Depósito confirmado — Futoro',
+          depositConfirmedEmail(userInfo.rows[0].username, deposit.amount)
         );
       }
     } catch (emailErr) {
@@ -331,7 +329,7 @@ router.post('/asaas/checkout', auth, requireRiskTerm, requireKyc, requireSuitabi
         customerId,
         amount,
         externalReference: deposit.id,
-        description: 'Deposito Bubuya'
+        description: 'Deposito Futoro'
       });
     } catch (err) {
       await client.query('ROLLBACK');

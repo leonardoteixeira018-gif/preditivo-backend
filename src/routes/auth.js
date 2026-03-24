@@ -219,14 +219,8 @@ router.post('/register/verify', async (req, res) => {
     }
 
     const { sendEmail } = require('../lib/email');
-    await sendEmail(
-      normalizedEmail,
-      `Boas-vindas a ${APP_BRAND}!`,
-      `<h1>Ola, ${payload.name}!</h1>
-       <p>Seu cadastro na ${APP_BRAND} foi confirmado com sucesso.</p>
-       <p>Voce ja pode comecar a apostar nos seus mercados favoritos.</p>
-       <p><a href="${process.env.APP_URL || '#'}">Clique aqui para acessar a plataforma</a></p>`
-    );
+    const { welcomeEmail } = require('../lib/emailTemplates');
+    await sendEmail(normalizedEmail, `Bem-vindo(a) à ${APP_BRAND}!`, welcomeEmail(payload.name));
 
     const token = jwt.sign({ id: result.rows[0].id }, process.env.JWT_SECRET, { expiresIn: '7d' });
     setAuthCookie(res, token);
@@ -749,8 +743,8 @@ router.post('/2fa/setup', auth, async (req, res) => {
     }
 
     const secret = speakeasy.generateSecret({
-      name: 'Bubuya (' + user.email + ')',
-      issuer: 'Bubuya'
+      name: 'Futoro (' + user.email + ')',
+      issuer: 'Futoro'
     });
 
     await pool.query(

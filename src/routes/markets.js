@@ -2,6 +2,7 @@ const router = require('express').Router();
 const pool = require('../lib/db');
 const adminAuth = require('../middleware/adminAuth');
 const { sendEmail } = require('../lib/email');
+const { marketWonEmail, marketLostEmail } = require('../lib/emailTemplates');
 const { APP_URL, APP_BRAND, ADMIN_EMAIL } = require('../lib/appConfig');
 const cache = require('../lib/cache');
 
@@ -239,39 +240,18 @@ router.post('/:id/resolve', adminAuth, async (req, res) => {
 
     // Envia emails fora da transação (não bloqueia o commit em caso de falha)
     for (const bet of winners.rows) {
-      const payout = parseFloat(bet.potential_payout);
       sendEmail(
         bet.email,
-        `Voce ganhou! Mercado resolvido - ${APP_BRAND}`,
-        `<div style="font-family:sans-serif;background:#080c10;color:#e8edf2;padding:32px;border-radius:12px;max-width:500px">
-          <h2 style="color:#00e676">Parabens, ${bet.username}!</h2>
-          <p style="color:#5a6878;margin-bottom:20px">Voce apostou certo no mercado:</p>
-          <div style="background:#0e1419;border:1px solid rgba(255,255,255,0.07);border-radius:10px;padding:20px;margin-bottom:20px">
-            <div style="font-weight:600;margin-bottom:12px">${m.title}</div>
-            <div style="color:#5a6878;font-size:0.9rem">Resultado: <strong style="color:#00e676">${outcome.toUpperCase()}</strong></div>
-            <div style="color:#5a6878;font-size:0.9rem;margin-top:6px">Sua aposta: <strong style="color:#e8edf2">R$${parseFloat(bet.amount).toFixed(2)}</strong></div>
-            <div style="color:#5a6878;font-size:0.9rem;margin-top:6px">Retorno creditado: <strong style="color:#00e676">R$${payout.toFixed(2)}</strong></div>
-          </div>
-          <a href="${APP_URL}" style="display:inline-block;background:#00e676;color:#080c10;font-weight:700;padding:12px 24px;border-radius:8px;text-decoration:none">Ver meu saldo</a>
-        </div>`
+        `🏆 Você acertou! — Futoro`,
+        marketWonEmail(bet.username, m.title, bet.amount, bet.potential_payout)
       ).catch(() => {});
     }
 
     for (const bet of losers.rows) {
       sendEmail(
         bet.email,
-        `Resultado do mercado - ${APP_BRAND}`,
-        `<div style="font-family:sans-serif;background:#080c10;color:#e8edf2;padding:32px;border-radius:12px;max-width:500px">
-          <h2 style="color:#e8edf2">Resultado do mercado</h2>
-          <p style="color:#5a6878;margin-bottom:20px">Ola ${bet.username}, o mercado foi resolvido:</p>
-          <div style="background:#0e1419;border:1px solid rgba(255,255,255,0.07);border-radius:10px;padding:20px;margin-bottom:20px">
-            <div style="font-weight:600;margin-bottom:12px">${m.title}</div>
-            <div style="color:#5a6878;font-size:0.9rem">Resultado: <strong style="color:#ff4757">${outcome.toUpperCase()}</strong></div>
-            <div style="color:#5a6878;font-size:0.9rem;margin-top:6px">Sua aposta: <strong style="color:#e8edf2">R$${parseFloat(bet.amount).toFixed(2)} em ${bet.side.toUpperCase()}</strong></div>
-          </div>
-          <p style="color:#5a6878;font-size:0.85rem;margin-bottom:20px">Nao desanime, explore outros mercados e tente novamente.</p>
-          <a href="${APP_URL}" style="display:inline-block;background:#0e1419;color:#00e676;font-weight:700;padding:12px 24px;border-radius:8px;text-decoration:none;border:1px solid rgba(0,230,118,0.3)">Ver mercados</a>
-        </div>`
+        `Resultado: ${m.title.slice(0, 50)} — Futoro`,
+        marketLostEmail(bet.username, m.title, bet.amount, bet.side, outcome)
       ).catch(() => {});
     }
 
