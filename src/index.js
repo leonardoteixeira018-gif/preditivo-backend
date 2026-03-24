@@ -22,10 +22,8 @@ const altOrigin = appOrigin.includes('://www.')
 const allowedOrigins = [
   appOrigin,
   altOrigin,
-  'https://bubuya.com.br',        // Sem www
-  'https://www.bubuya.com.br',    // Com www
-  'https://futoro.com.br',        // Novo domínio sem www
-  'https://www.futoro.com.br',    // Novo domínio com www
+  'https://futoro.com.br',        // Sem www
+  'https://www.futoro.com.br',    // Com www
   'http://localhost:3000',
   'http://localhost:8000'
 ];
@@ -568,6 +566,15 @@ app.listen(PORT, async () => {
     )
   `).catch(()=>{});
   await pool.query("CREATE INDEX IF NOT EXISTS idx_admin_audit_created ON admin_audit_logs(created_at DESC)").catch(()=>{});
+
+  // T4 — URLs amigáveis: coluna slug em markets
+  await pool.query("ALTER TABLE markets ADD COLUMN IF NOT EXISTS slug TEXT").catch(()=>{});
+  await pool.query("CREATE UNIQUE INDEX IF NOT EXISTS idx_markets_slug ON markets(slug) WHERE slug IS NOT NULL").catch(()=>{});
+  // Backfill: mercados sem slug recebem slug baseado no UUID
+  await pool.query(`
+    UPDATE markets SET slug = LOWER(REPLACE(CAST(id AS TEXT), '-', ''))
+    WHERE slug IS NULL
+  `).catch(()=>{});
 
   // Carrega limites do banco no cache em memória
   const configCache = require('./lib/configCache');

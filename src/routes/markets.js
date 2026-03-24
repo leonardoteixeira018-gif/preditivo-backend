@@ -9,6 +9,37 @@ const cache = require('../lib/cache');
 const CACHE_KEY_LIST = 'markets:list';
 const CACHE_KEY_STATS = 'markets:stats';
 
+/**
+ * Gera slug URL-amigável a partir do título.
+ * Ex.: "Lula vai ganhar em 2026?" → "lula-vai-ganhar-em-2026"
+ */
+function generateSlug(title) {
+  return String(title || '')
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '') // remove acentos
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, '')  // remove chars especiais
+    .trim()
+    .replace(/\s+/g, '-')          // espaços → hífens
+    .replace(/-+/g, '-')           // múltiplos hífens → um
+    .substring(0, 80);             // máximo 80 chars
+}
+
+/**
+ * Garante slug único — adiciona sufixo numérico se necessário.
+ */
+async function uniqueSlug(base, excludeId = null) {
+  let candidate = base;
+  let attempt = 0;
+  while (true) {
+    const q = excludeId
+      ? await pool.query('SELECT id FROM markets WHERE slug = $1 AND id != $2', [candidate, excludeId])
+      : await pool.query('SELECT id FROM markets WHERE slug = $1', [candidate]);
+    if (!q.rows.length) return candidate;
+    attempt++;
+    candidate = `${base}-${attempt}`;
+  }
+}
+
 router.get('/stats', async (req, res) => {
   try {
     const cached = cache.get(CACHE_KEY_STATS);
@@ -91,6 +122,35 @@ router.get('/', async (req, res) => {
   }
 });
 
+// Lookup by slug (must come before /:id to avoid conflicts)
+router.get('/by-slug/:slug', async (req, res) => {
+  try {
+    const slug = req.params.slug;
+    const cacheKey = `market:slug:${slug}`;
+    const cached = cache.get(cacheKey);
+    if (cached) return res.json(cached);
+
+    const marketRow = await pool.query(
+      `SELECT m.*,
+        (SELECT COUNT(DISTINCT user_id) FROM bets WHERE market_id = m.id) AS bettors_count
+       FROM markets m WHERE m.slug = $1`,
+      [slug]
+    );
+    if (!marketRow.rows.length) return res.status(404).json({ error: 'Mercado nao encontrado' });
+
+    const history = await pool.query(
+      'SELECT prob_yes, prob_no, volume, created_at FROM market_history WHERE market_id = $1 ORDER BY created_at ASC',
+      [marketRow.rows[0].id]
+    );
+
+    const response = { ...marketRow.rows[0], history: history.rows };
+    cache.set(cacheKey, response, 30_000);
+    res.json(response);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.get('/:id', async (req, res) => {
   try {
     const cacheKey = `market:${req.params.id}`;
@@ -135,11 +195,15 @@ router.post('/', adminAuth, async (req, res) => {
     const q_yes = Math.round(200 * prob);
     const q_no  = 200 - q_yes;
 
+    // Gerar slug único para URL amigável
+    const slugBase = generateSlug(title);
+    const slug = await uniqueSlug(slugBase);
+
     const result = await pool.query(
-      `INSERT INTO markets (title, description, category, ends_at, q_yes, q_no, b, volume, status, image_url)
-       VALUES ($1, $2, $3, $4, $5, $6, 100, 0, 'open', $7)
+      `INSERT INTO markets (title, description, category, ends_at, q_yes, q_no, b, volume, status, image_url, slug)
+       VALUES ($1, $2, $3, $4, $5, $6, 100, 0, 'open', $7, $8)
        RETURNING *`,
-      [title, description || null, category || 'politica', marketEndsAt, q_yes, q_no, image_url || null]
+      [title, description || null, category || 'politica', marketEndsAt, q_yes, q_no, image_url || null, slug]
     );
 
     cache.del(CACHE_KEY_LIST);
