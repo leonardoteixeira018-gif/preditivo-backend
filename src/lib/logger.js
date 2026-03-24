@@ -15,7 +15,7 @@ const logger = winston.createLogger({
     winston.format.errors({ stack: true }),
     winston.format.json()
   ),
-  defaultMeta: { service: 'bubuya-api' },
+  defaultMeta: { service: 'futoro-api' },
   transports: [
     // Console (development)
     new winston.transports.Console({

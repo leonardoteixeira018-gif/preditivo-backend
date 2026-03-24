@@ -109,6 +109,12 @@ router.post('/', auth, requireRiskTerm, requireNotExcluded, requireKyc, requireS
     }
 
     // ── Verificação de limites de suitability ───────────────────────────────
+    // Bots e usuários com no_bet_limit=true ignoram todos os limites
+    const isBotUser    = !!user.rows[0].is_bot;
+    const noBetLimit   = !!user.rows[0].no_bet_limit;
+    if (isBotUser || noBetLimit) {
+      // pular todas as verificações de suitability
+    } else {
     const suitabilityProfile = user.rows[0].suitability_profile;
     if (!suitabilityProfile) {
       logger.warn('Bet blocked: suitability profile missing inside transaction', {
@@ -196,6 +202,7 @@ router.post('/', auth, requireRiskTerm, requireNotExcluded, requireKyc, requireS
       });
     }
     // ── Fim verificação de limites ──────────────────────────────────────────
+    } // end else (isBotUser || noBetLimit)
 
     // Anomaly detection: aposta desproporcional ao saldo (não bloqueia)
     const balanceRatio = amt / parseFloat(user.rows[0].balance);

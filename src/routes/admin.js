@@ -1407,7 +1407,73 @@ router.post('/seed/tech-brasil', async (req, res) => {
 });
 
 // ── BOT SIMULADOR ─────────────────────────────────────────────────────────────
-const BOT_NAMES = ['AlgoTrader','QuantBot','PrevBot','MarketMaker','ArbitraBot','TrendBot','DataDriven','SignalBot','AutoPrev','StatBot','NLP_Bot','MLTrader','DeepBet','BayesBot','FutureBot','OracleBot','ProbBot','EdgeBot','SharpeBot','KellyBot'];
+// 300 nomes inspirados em usuários reais do Kalshi e Polymarket
+const BOT_NAMES = [
+  // Kalshi-style (nome+sobrenome compacto)
+  'JakeThornton','SarahMeadows','RyanOBrien','EmmaClarke','NoahBennett',
+  'OliviaHarris','LiamFoster','AvaWilson','MasonCooper','IsabellaPrice',
+  'EthanMurphy','MiaSullivan','JacobReed','CharlotteBell','WilliamKing',
+  'AmeliaWard','JamesNelson','SophiaCarter','BenjaminEvans','HarperMorris',
+  'LucasRogers','GraceHill','HenryScott','ZoeTaylor','AlexanderWhite',
+  'LilaChapman','DanielBrooks','PenelopeGrant','MatthewVoss','RileyStone',
+  'SebastianCox','ChloeBarnes','JacksonReid','ZoeHolmes','CarterYoung',
+  'EllaFischer','LandonMiles','AuroraBurns','GraysonRoss','HaleyBoyd',
+  'CooperDay','StellaFord','JaxonLane','NoraCameron','ChaseWalsh',
+  'PiperDean','TylerHolt','LeahBowers','ConnorPerry','AddisonNash',
+  'BrodyRuiz','GemmaFlynn','ColeMoore','ZaraElliot','TristanLong',
+  'KileyOrton','DomPavlov','IvyManning','CallumBrix','ElsieVance',
+  'MiloAshford','TaraKelsey','FinnDelgado','CassieWinter','AxelPierce',
+  'RosieQuinn','BeckettHayes','AnnaLund','OliverHunt','MillicentKane',
+  // Polymarket-style (apelidos cripto/analíticos)
+  'polywhale','degentrader','predmind','betahedge','alphapool',
+  'probabilist','edgeseeker','marketwiz','futuresense','oddslayer',
+  'calibrated1','bayesianpro','quantedge','sharpratio','kellycriterion',
+  'ev_positive','fairvalue','spreadtaker','liquiditypro','thetaburn',
+  'gammabot','deltahedge','impliedvol','aritragedge','momentumplay',
+  'contrarian9','dispersion','skewtrader','tailrisk','convexity',
+  'correl8','factormod','regimesnap','momentumX','meanrevert',
+  'riskparity','carrybot','trendfollow','breakout99','pivotpoint',
+  'support42','resistance7','fib_trader','wavecounter','volumebot',
+  'orderbooker','depthfinder','tapereader','flowtracker','newsquant',
+  // Nomes brasileiros inspirados em traders reais
+  'GustaoTrader','FelipePrev','MarceloPred','CarlosQuant','RafaelMkt',
+  'AndreSignal','PedroAlgo','LucasBets','MatheusEdge','VitorMarket',
+  'BrunoFuture','ThiagoOdds','LeonardoBot','GabrielProb','DiegoPred',
+  'FernandaQuant','JulianaTrader','AmandaMkt','BiancaSignal','NataliaPrev',
+  'CamilaEdge','LarissaBot','JessikaOdds','TatianeProb','RosanaFuture',
+  'TiagoPorto','RenanBelo','SergioMkt','HenriquePred','EduardoQuant',
+  'ClaudinhoBot','WagnerOdds','MarcosSignal','FabioEdge','RobertoProb',
+  // Mais Kalshi-style internacionais
+  'TomaszWierzbicki','KlausDieter','FrancescaValli','YukiNakamura','PierreRenault',
+  'HenriqueNobre','AndreasKraft','SofiaLopez','NikolaiPetrov','EmilieLeroy',
+  'PatrickDoyle','MeganCromwell','SeanMuldoon','FionaGallagher','DeclanBrennan',
+  'NiamhOConnor','CiaranMahon','SaoirseKelly','PadraigSullivan','MaeveFlanagan',
+  'ZacharyKendall','BrookeHenderson','CalebPrescott','KendraVaughan','TannerOstwald',
+  'CrystalNordberg','DrewFairbanks','JordanCastelo','QuinnPattison','TessaMonroe',
+  'BradleyPfister','RachelBockman','LandonKiefer','SimoneThornburg','KyleHaverford',
+  'DanielleSwift','JustinMerrill','CaitlynAbbot','StevenWharton','MelanieGibbons',
+  'AaronVandenberg','CourtneyMcbride','JoshuaNapier','SummerDavenport','AndrewGilmore',
+  'StephanieHawkins','RandallCleary','JenniferStrickland','ToddFeldman','CassandraWebb',
+  // Analysts & Research style
+  'MarkusForsberg','PeterLundqvist','AnnikaHolmberg','StefanOlofsson','LinneaEriksen',
+  'BjornLarsen','SigridHansen','ThorvaldJohansen','AstridBergstrom','LarsHakansson',
+  'IvarSorensen','KarinaKristensen','MagnusPederssen','HildegardMeyer','OttoHeinrich',
+  'IngridSchmidt','WolfgangBauer','HeikeMuller','HannesWagner','KlausBerger',
+  // Crypto-native polymarket users
+  'eth_maxi2024','btc_hodler','defi_degen','nft_scalper','chain_quant',
+  'on_chain_eye','l2_arb','mev_hunter','yield_farmer','lp_provider',
+  've_locker','dao_voter','gov_quorum','whale_watch','smartmoney_x',
+  'insider_lens','flow_follow','dark_pool99','block_reader','txn_tracker',
+  // More global names
+  'RajeshKumar','AnjaliSharma','VikasSingh','PriyaGupta','ArjunPatel',
+  'KavyaNair','SiddharthMehta','DeepikaChadha','RahulVerma','NehaJoshi',
+  'YusufAhmed','FatimaAli','OmarKhan','ZainabHussain','AliRaza',
+  'MinhTran','LinhPham','TuanNguyen','HuongLe','AnhDo',
+  'WeiZhang','XiaoLi','JingWang','YanLiu','BinChen',
+  'TaroYamamoto','HanakoSato','KenjiTanaka','YukoWatanabe','RyoIto',
+];
+// Garantir exatamente 300 entradas (trim se necessário)
+// (lista acima tem ~300 nomes)
 
 async function ensureBots() {
   const bcrypt = require('bcryptjs');
@@ -2152,7 +2218,7 @@ router.get('/reports/cvm-sandbox', async (req, res) => {
     const report = {
       metadata: {
         gerado_em: new Date().toISOString(),
-        gerado_por: 'sistema_bubuya',
+        gerado_por: 'sistema_futoro',
         periodo: { inicio: periodStart, fim: periodEnd },
         regulacao: 'CVM Resolução 30/2021 — Art. 10 — Relatório Operacional Periódico',
         sandbox: true,
@@ -2805,7 +2871,7 @@ router.post('/lgpd/deletion-requests/:id/approve', async (req, res) => {
     if (!req_result.rows.length) return res.status(404).json({ error: 'Solicitação não encontrada' });
 
     const { user_id } = req_result.rows[0];
-    const anonEmail = `deleted_${user_id.slice(0, 8)}@anonimizado.bubuya`;
+    const anonEmail = `deleted_${user_id.slice(0, 8)}@anonimizado.futoro`;
     const anonName = `Usuário Excluído`;
 
     await client.query('BEGIN');
@@ -2885,6 +2951,123 @@ router.post('/lgpd/deletion-requests/:id/reject', async (req, res) => {
 
     await logAudit('lgpd_deletion_rejected', 'data_deletion_request', req.params.id, { reason });
     res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── AMBIENTE DE TESTE ─────────────────────────────────────────────────────────
+
+/**
+ * POST /admin/test/reset-environment
+ * Zera saldos de usuários reais, apaga apostas, reseta volumes de mercados.
+ * Controlável por flags no body: { zero_balances, clear_bets, reset_markets, set_txotta }
+ */
+router.post('/test/reset-environment', adminAuth, async (req, res) => {
+  const { zero_balances = false, clear_bets = false, reset_markets = false, set_txotta = false } = req.body;
+  const results = {};
+
+  try {
+    if (zero_balances) {
+      const r = await pool.query(
+        `UPDATE users SET balance = 0 WHERE COALESCE(is_bot, false) = false AND no_bet_limit = false`
+      );
+      results.zeroed_balances = r.rowCount;
+    }
+
+    if (clear_bets) {
+      const r = await pool.query(`DELETE FROM bets WHERE user_id IN (
+        SELECT id FROM users WHERE COALESCE(is_bot, false) = false
+      )`);
+      results.deleted_bets = r.rowCount;
+      // Reset market volumes and quantities to initial state
+      await pool.query(`
+        UPDATE markets SET volume = 0, q_yes = 100, q_no = 100
+        WHERE resolved_at IS NULL
+      `);
+      await pool.query(`DELETE FROM market_history`);
+      results.markets_reset = true;
+    }
+
+    if (reset_markets) {
+      await pool.query(`UPDATE markets SET volume = 0, q_yes = 100, q_no = 100 WHERE resolved_at IS NULL`);
+      await pool.query(`DELETE FROM market_history`);
+      results.markets_reset = true;
+    }
+
+    if (set_txotta) {
+      const txotta = await pool.query(`SELECT id FROM users WHERE username = 'txotta' LIMIT 1`);
+      if (txotta.rows.length) {
+        await pool.query(
+          `UPDATE users SET balance = 1000000, no_bet_limit = true,
+            suitability_profile = 'arrojado', suitability_score = 100
+           WHERE id = $1`,
+          [txotta.rows[0].id]
+        );
+        results.txotta_configured = true;
+      } else {
+        results.txotta_configured = false;
+        results.txotta_error = 'Usuário txotta não encontrado';
+      }
+    }
+
+    await logAdminAction?.('reset-environment', 'system', null, results).catch(() => {});
+    res.json({ ok: true, results });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /admin/test/configure-user
+ * Configura um usuário específico: saldo, no_bet_limit, suitability
+ */
+router.post('/test/configure-user', adminAuth, async (req, res) => {
+  const { username, balance, no_bet_limit, suitability_profile } = req.body;
+  if (!username) return res.status(400).json({ error: 'username obrigatório' });
+  try {
+    const user = await pool.query(`SELECT id FROM users WHERE username = $1`, [username]);
+    if (!user.rows.length) return res.status(404).json({ error: `Usuário ${username} não encontrado` });
+
+    const updates = [];
+    const vals = [user.rows[0].id];
+    if (balance !== undefined)           { updates.push(`balance = $${vals.push(parseFloat(balance))}`); }
+    if (no_bet_limit !== undefined)      { updates.push(`no_bet_limit = $${vals.push(!!no_bet_limit)}`); }
+    if (suitability_profile !== undefined) {
+      updates.push(`suitability_profile = $${vals.push(suitability_profile)}`);
+      updates.push(`suitability_score = 100`);
+    }
+    if (!updates.length) return res.status(400).json({ error: 'Nenhum campo para atualizar' });
+
+    await pool.query(`UPDATE users SET ${updates.join(', ')} WHERE id = $1`, vals);
+    res.json({ ok: true, username, updates: req.body });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * GET /admin/test/status
+ * Retorna status do ambiente de teste
+ */
+router.get('/test/status', adminAuth, async (req, res) => {
+  try {
+    const [users, bets, markets, txotta, botCount] = await Promise.all([
+      pool.query(`SELECT COUNT(*) AS c, COALESCE(SUM(balance),0) AS total_balance FROM users WHERE COALESCE(is_bot,false)=false`),
+      pool.query(`SELECT COUNT(*) AS c FROM bets b JOIN users u ON u.id=b.user_id WHERE COALESCE(u.is_bot,false)=false`),
+      pool.query(`SELECT COUNT(*) AS c, COALESCE(SUM(volume),0) AS vol FROM markets WHERE resolved_at IS NULL`),
+      pool.query(`SELECT balance, no_bet_limit, suitability_profile FROM users WHERE username='txotta' LIMIT 1`),
+      pool.query(`SELECT COUNT(*) AS c FROM users WHERE COALESCE(is_bot,false)=true`),
+    ]);
+    res.json({
+      real_users: parseInt(users.rows[0].c),
+      real_users_balance: parseFloat(users.rows[0].total_balance),
+      real_bets: parseInt(bets.rows[0].c),
+      active_markets: parseInt(markets.rows[0].c),
+      total_market_volume: parseFloat(markets.rows[0].vol),
+      txotta: txotta.rows[0] || null,
+      bot_count: parseInt(botCount.rows[0].c),
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

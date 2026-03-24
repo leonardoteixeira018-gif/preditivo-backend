@@ -8,7 +8,7 @@ const webpush = require('web-push');
 let vapidConfigured = false;
 if (process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
   try {
-    let subject = process.env.VAPID_MAILTO || 'mailto:suporte@bubuya.com.br';
+    let subject = process.env.VAPID_MAILTO || 'mailto:suporte@futoro.com.br';
     // Garante prefixo mailto: caso o env venha sem ele
     if (!subject.startsWith('mailto:') && !subject.startsWith('https:')) {
       subject = 'mailto:' + subject;

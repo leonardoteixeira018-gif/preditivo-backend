@@ -567,6 +567,9 @@ app.listen(PORT, async () => {
   `).catch(()=>{});
   await pool.query("CREATE INDEX IF NOT EXISTS idx_admin_audit_created ON admin_audit_logs(created_at DESC)").catch(()=>{});
 
+  // no_bet_limit — bypass de suitability para usuários especiais (ex: txotta em testes)
+  await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS no_bet_limit BOOLEAN NOT NULL DEFAULT FALSE").catch(()=>{});
+
   // T4 — URLs amigáveis: coluna slug em markets
   await pool.query("ALTER TABLE markets ADD COLUMN IF NOT EXISTS slug TEXT").catch(()=>{});
   await pool.query("CREATE UNIQUE INDEX IF NOT EXISTS idx_markets_slug ON markets(slug) WHERE slug IS NOT NULL").catch(()=>{});

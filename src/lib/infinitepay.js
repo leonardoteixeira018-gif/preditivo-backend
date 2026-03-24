@@ -37,7 +37,7 @@ async function createCheckoutLink({ amount, webhookUrl }) {
     handle,
     items: [
       {
-        description: 'Deposito Bubuya',
+        description: 'Deposito Futoro',
         quantity: 1,
         price: Math.round(amount * 100)
       }

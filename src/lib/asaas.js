@@ -74,7 +74,7 @@ async function createPixCharge({ customerId, amount, externalReference, descript
     value: amount,
     dueDate,
     externalReference,
-    description: description || 'Deposito Bubuya'
+    description: description || 'Deposito Futoro'
   });
 }
 
