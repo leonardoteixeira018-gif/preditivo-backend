@@ -83,6 +83,20 @@ router.post('/register', async (req, res) => {
       return res.status(400).json({ error: 'name, email e password sao obrigatorios' });
     }
 
+    // Validação de força de senha
+    if (typeof password !== 'string' || password.length < 8) {
+      return res.status(400).json({ error: 'Senha deve ter no minimo 8 caracteres' });
+    }
+    if (!/[A-Z]/.test(password)) {
+      return res.status(400).json({ error: 'Senha deve conter pelo menos 1 letra maiuscula' });
+    }
+    if (!/[a-z]/.test(password)) {
+      return res.status(400).json({ error: 'Senha deve conter pelo menos 1 letra minuscula' });
+    }
+    if (!/[0-9]/.test(password)) {
+      return res.status(400).json({ error: 'Senha deve conter pelo menos 1 numero' });
+    }
+
     const exists = await pool.query('SELECT id FROM users WHERE email = $1', [normalizedEmail]);
     if (exists.rows.length) {
       logger.warn('Registration failed - email already exists', {
@@ -516,8 +530,11 @@ router.post('/reset-password', async (req, res) => {
     if (!normalizedEmail || !code || !password) {
       return res.status(400).json({ error: 'Email, codigo e senha sao obrigatorios' });
     }
-    if (String(password).length < 6) {
-      return res.status(400).json({ error: 'Senha deve ter no minimo 6 caracteres' });
+    if (typeof password !== 'string' || password.length < 8) {
+      return res.status(400).json({ error: 'Senha deve ter no minimo 8 caracteres' });
+    }
+    if (!/[A-Z]/.test(password) || !/[a-z]/.test(password) || !/[0-9]/.test(password)) {
+      return res.status(400).json({ error: 'Senha deve conter maiuscula, minuscula e numero' });
     }
 
     await client.query('BEGIN');

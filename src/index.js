@@ -11,6 +11,14 @@ app.set('trust proxy', 1); // Confia no primeiro proxy (Railway/Vercel)
 const pool = require('./lib/db');
 const logger = require('./lib/logger');
 const { APP_URL } = require('./lib/appConfig');
+
+// ── Validação de chaves obrigatórias no startup ─────────────────────────────
+try {
+  require('./lib/cpf-crypto').cpfHmac('00000000000');
+} catch (err) {
+  console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'FATAL', msg: err.message }));
+  process.exit(1);
+}
 const requestLogger = require('./middleware/requestLogger');
 
 const appOrigin = new URL(APP_URL).origin;
@@ -102,34 +110,47 @@ const webhookLimiter = rateLimit({
   message: { error: 'Webhook rate limit exceeded' }
 });
 
-// betUserLimiter: limita apostas por usuário (não por IP) — previne abuso
-// O keyGenerator usa user_id do JWT se disponível, caso contrário usa IP
+// Extrai user_id do JWT sem verificar (só para rate limiting — auth middleware valida depois)
+const jwt = require('jsonwebtoken');
+function extractUserId(req) {
+  try {
+    const authHeader = req.headers.authorization;
+    let token = null;
+    if (authHeader && authHeader.startsWith('Bearer ')) token = authHeader.slice(7);
+    else if (req.cookies?.auth_token) token = req.cookies.auth_token;
+    if (!token) return req.ip;
+    const decoded = jwt.decode(token);
+    return decoded?.id || req.ip;
+  } catch { return req.ip; }
+}
+
+// betUserLimiter: limita apostas por usuário (user_id do JWT)
 const betUserLimiter = rateLimit({
-  windowMs: 60 * 1000, // 1 minuto
-  max: 10,             // 10 apostas/min por usuário
+  windowMs: 60 * 1000,
+  max: 10,
   standardHeaders: true,
   legacyHeaders: false,
-  keyGenerator: (req) => req.user?.id || req.ip,
+  keyGenerator: extractUserId,
   message: { error: 'Muitas apostas em pouco tempo. Aguarde 1 minuto.' }
 });
 
 // withdrawalUserLimiter: limita saques por usuário
 const withdrawalUserLimiter = rateLimit({
-  windowMs: 60 * 1000, // 1 minuto
-  max: 5,              // 5 req/min por usuário
+  windowMs: 60 * 1000,
+  max: 5,
   standardHeaders: true,
   legacyHeaders: false,
-  keyGenerator: (req) => req.user?.id || req.ip,
+  keyGenerator: extractUserId,
   message: { error: 'Muitas requisições de saque. Aguarde 1 minuto.' }
 });
 
 // depositUserLimiter: limita checkouts por usuário
 const depositUserLimiter = rateLimit({
-  windowMs: 60 * 1000, // 1 minuto
-  max: 5,              // 5 req/min por usuário
+  windowMs: 60 * 1000,
+  max: 5,
   standardHeaders: true,
   legacyHeaders: false,
-  keyGenerator: (req) => req.user?.id || req.ip,
+  keyGenerator: extractUserId,
   message: { error: 'Muitas requisições de depósito. Aguarde 1 minuto.' }
 });
 

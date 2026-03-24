@@ -70,50 +70,29 @@ router.get('/stats', async (req, res) => {
 
 router.get('/', async (req, res) => {
   try {
-    const limit = req.query.limit ? Math.min(parseInt(req.query.limit, 10) || 20, 100) : null;
+    const limit = Math.min(parseInt(req.query.limit, 10) || 20, 100);
     const offset = parseInt(req.query.offset, 10) || 0;
     const category = req.query.category || null;
 
-    // Cache key inclui parâmetros para suportar paginação
-    const cacheKey = limit
-      ? `${CACHE_KEY_LIST}:${category || 'all'}:${limit}:${offset}`
-      : `${CACHE_KEY_LIST}:${category || 'all'}:all`;
-
+    const cacheKey = `${CACHE_KEY_LIST}:${category || 'all'}:${limit}:${offset}`;
     const cached = cache.get(cacheKey);
     if (cached) return res.json(cached);
 
-    let query, params;
-    if (limit !== null) {
-      query = `
-        SELECT *, COUNT(*) OVER() AS total_count
-        FROM markets
-        WHERE ($1::text IS NULL OR category = $1)
-        ORDER BY created_at DESC
-        LIMIT $2 OFFSET $3
-      `;
-      params = [category, limit, offset];
-    } else {
-      query = `
-        SELECT * FROM markets
-        WHERE ($1::text IS NULL OR category = $1)
-        ORDER BY created_at DESC
-      `;
-      params = [category];
-    }
+    const query = `
+      SELECT *, COUNT(*) OVER() AS total_count
+      FROM markets
+      WHERE ($1::text IS NULL OR category = $1)
+      ORDER BY created_at DESC
+      LIMIT $2 OFFSET $3
+    `;
+    const result = await pool.query(query, [category, limit, offset]);
 
-    const result = await pool.query(query, params);
-
-    let response;
-    if (limit !== null) {
-      response = {
-        markets: result.rows.map(r => { const { total_count, ...m } = r; return m; }),
-        total: parseInt(result.rows[0]?.total_count || 0, 10),
-        limit,
-        offset
-      };
-    } else {
-      response = result.rows;
-    }
+    const response = {
+      markets: result.rows.map(r => { const { total_count, ...m } = r; return m; }),
+      total: parseInt(result.rows[0]?.total_count || 0, 10),
+      limit,
+      offset
+    };
 
     cache.set(cacheKey, response, 30_000); // TTL 30s
     res.json(response);

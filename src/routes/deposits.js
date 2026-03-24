@@ -24,22 +24,64 @@ const REFERRED_BONUS = 20;
 const MIN_DEPOSIT = 5;
 
 // ── Asaas webhook validation ─────────────────────────────────────────────────
-// Asaas inclui o campo '$asaas_access_token' no body de cada webhook.
-// Configure ASAAS_WEBHOOK_TOKEN no Railway com o mesmo valor configurado no
-// painel Asaas em Configurações > Notificações.
+// Configure ASAAS_WEBHOOK_TOKEN no Railway com o access token do painel Asaas.
+// Opcionalmente configure ASAAS_ALLOWED_IPS com IPs dos servidores Asaas.
+const VALID_ASAAS_EVENTS = new Set([
+  'PAYMENT_CREATED', 'PAYMENT_UPDATED', 'PAYMENT_CONFIRMED',
+  'PAYMENT_RECEIVED', 'PAYMENT_OVERDUE', 'PAYMENT_DELETED',
+  'PAYMENT_REFUNDED', 'PAYMENT_PARTIALLY_REFUNDED'
+]);
+
 function validateAsaasWebhook(req) {
-  // O Asaas não envia token de validação no payload/header dos webhooks.
-  // A segurança é garantida por:
-  // 1. A URL do webhook não é pública/documentada
-  // 2. O externalReference do payload é um UUID v4 do nosso banco (impossível de adivinhar)
-  // 3. Toda confirmação só atualiza depósitos existentes (SELECT FOR UPDATE)
-  // 4. Rate limiting no endpoint
   const event = req.body?.event || '';
   const paymentId = req.body?.payment?.id || '';
 
   if (!event || !paymentId) {
-    logger.warn('[WEBHOOK] Asaas webhook rejeitado: payload invalido', { body: req.body });
+    logger.warn('[WEBHOOK] Payload invalido', { body: req.body });
     return false;
+  }
+
+  // Validar tipo de evento contra whitelist
+  if (!VALID_ASAAS_EVENTS.has(event)) {
+    logger.warn('[WEBHOOK] Evento desconhecido', { event, ip: req.ip });
+    return false;
+  }
+
+  // Validar formato do payment.id (Asaas usa prefixo "pay_")
+  if (typeof paymentId !== 'string' || !paymentId.startsWith('pay_')) {
+    logger.warn('[WEBHOOK] payment.id formato invalido', { paymentId, ip: req.ip });
+    return false;
+  }
+
+  // Token validation (ASAAS_WEBHOOK_TOKEN)
+  const expectedToken = process.env.ASAAS_WEBHOOK_TOKEN;
+  if (expectedToken) {
+    const receivedToken = req.headers['asaas-access-token'] || req.body?.accessToken || '';
+    if (!receivedToken) {
+      logger.warn('[WEBHOOK] Token ausente', { ip: req.ip });
+      return false;
+    }
+    try {
+      const a = Buffer.from(String(expectedToken));
+      const b = Buffer.from(String(receivedToken));
+      if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
+        logger.warn('[WEBHOOK] Token invalido', { ip: req.ip });
+        return false;
+      }
+    } catch {
+      logger.warn('[WEBHOOK] Erro ao comparar tokens', { ip: req.ip });
+      return false;
+    }
+  }
+
+  // IP whitelist (opcional)
+  const allowedIps = process.env.ASAAS_ALLOWED_IPS;
+  if (allowedIps) {
+    const ipList = allowedIps.split(',').map(s => s.trim());
+    if (!ipList.includes(req.ip)) {
+      logger.warn('[WEBHOOK] IP nao autorizado', { ip: req.ip });
+      return false;
+    }
   }
 
   return true;
