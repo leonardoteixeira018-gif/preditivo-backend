@@ -570,11 +570,31 @@ app.listen(PORT, async () => {
   // T4 — URLs amigáveis: coluna slug em markets
   await pool.query("ALTER TABLE markets ADD COLUMN IF NOT EXISTS slug TEXT").catch(()=>{});
   await pool.query("CREATE UNIQUE INDEX IF NOT EXISTS idx_markets_slug ON markets(slug) WHERE slug IS NOT NULL").catch(()=>{});
-  // Backfill: mercados sem slug recebem slug baseado no UUID
+  // Backfill inicial: mercados sem slug recebem slug baseado no UUID (placeholder)
   await pool.query(`
     UPDATE markets SET slug = LOWER(REPLACE(CAST(id AS TEXT), '-', ''))
     WHERE slug IS NULL
   `).catch(()=>{});
+  // Re-gerar slugs legíveis para mercados com slug no formato UUID (32 hex chars)
+  try {
+    const { generateSlug, uniqueSlug } = require('./routes/markets');
+    const stale = await pool.query(
+      `SELECT id, title FROM markets WHERE slug ~ '^[0-9a-f]{32}$' ORDER BY created_at`
+    );
+    for (const row of stale.rows) {
+      try {
+        const base = generateSlug(row.title);
+        if (!base) continue;
+        const slug = await uniqueSlug(base, row.id);
+        await pool.query('UPDATE markets SET slug = $1 WHERE id = $2', [slug, row.id]);
+      } catch (_) {}
+    }
+    if (stale.rows.length > 0) {
+      console.log(JSON.stringify({ ts: new Date().toISOString(), level: 'INFO', msg: `Slugs regenerados para ${stale.rows.length} mercados` }));
+    }
+  } catch (e) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'WARN', msg: 'Slug regeneration failed', error: e.message }));
+  }
 
   // Carrega limites do banco no cache em memória
   const configCache = require('./lib/configCache');

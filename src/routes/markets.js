@@ -429,3 +429,5 @@ router.post('/close-expired', adminAuth, async (req, res) => {
 
 module.exports = router;
 module.exports.closeExpiredMarkets = closeExpiredMarkets;
+module.exports.generateSlug = generateSlug;
+module.exports.uniqueSlug = uniqueSlug;
