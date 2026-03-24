@@ -1200,7 +1200,7 @@ router.get('/bots/stats', async (req, res) => {
       WHERE COALESCE(u.is_bot, false) = true AND b.created_at > NOW() - INTERVAL '24 hours'
     `);
     const botBalances = await pool.query(`
-      SELECT username, balance FROM users WHERE COALESCE(is_bot, false) = true ORDER BY username LIMIT 20
+      SELECT username, balance FROM users WHERE COALESCE(is_bot, false) = true ORDER BY balance DESC LIMIT 300
     `);
     const activityByHour = await pool.query(`
       SELECT date_trunc('hour', b.created_at) as hora,
@@ -2986,12 +2986,19 @@ router.post('/test/reset-environment', adminAuth, async (req, res) => {
         WHERE resolved_at IS NULL
       `);
       await pool.query(`DELETE FROM market_history`);
+      cache.del('markets:stats');
       results.markets_reset = true;
     }
 
     if (reset_markets) {
+      // Apaga TODAS as apostas (bots + reais) para zerar o volume do banner
+      const rb = await pool.query(`DELETE FROM bets`);
+      results.bets_cleared = rb.rowCount;
+      // Zera volumes e quantidades dos mercados
       await pool.query(`UPDATE markets SET volume = 0, q_yes = 100, q_no = 100 WHERE resolved_at IS NULL`);
       await pool.query(`DELETE FROM market_history`);
+      // Invalida o cache de stats para refletir imediatamente no banner
+      cache.del('markets:stats');
       results.markets_reset = true;
     }
 
