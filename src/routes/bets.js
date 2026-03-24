@@ -586,7 +586,7 @@ router.get('/market/:market_id/trades', async (req, res) => {
     const { market_id } = req.params;
     const result = await pool.query(
       `SELECT b.side, b.amount, b.potential_payout, b.created_at,
-              LEFT(u.name, 1) || REPEAT('*', GREATEST(0, LENGTH(u.name) - 1)) AS display_name
+              LEFT(u.username, 1) || REPEAT('*', GREATEST(0, LENGTH(u.username) - 1)) AS display_name
        FROM bets b
        JOIN users u ON u.id = b.user_id
        WHERE b.market_id = $1
