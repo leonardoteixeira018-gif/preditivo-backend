@@ -580,6 +580,32 @@ router.get('/market/:market_id/book', async (req, res) => {
   }
 });
 
+// GET /bets/market/:market_id/trades — histórico público de operações recentes
+router.get('/market/:market_id/trades', async (req, res) => {
+  try {
+    const { market_id } = req.params;
+    const result = await pool.query(
+      `SELECT b.side, b.amount, b.potential_payout, b.created_at,
+              LEFT(u.name, 1) || REPEAT('*', GREATEST(0, LENGTH(u.name) - 1)) AS display_name
+       FROM bets b
+       JOIN users u ON u.id = b.user_id
+       WHERE b.market_id = $1
+       ORDER BY b.created_at DESC
+       LIMIT 20`,
+      [market_id]
+    );
+    res.json(result.rows.map(r => ({
+      side:    r.side,
+      amount:  parseFloat(r.amount).toFixed(2),
+      price:   Math.min(99, Math.max(1, Math.round((parseFloat(r.amount) / parseFloat(r.potential_payout)) * 100))),
+      created_at: r.created_at,
+      display_name: r.display_name
+    })));
+  } catch (err) {
+    res.status(500).json({ error: 'Erro ao buscar operações' });
+  }
+});
+
 // GET /bets/portfolio — posições abertas do usuário agrupadas por mercado+lado
 router.get('/portfolio', auth, async (req, res) => {
   try {
