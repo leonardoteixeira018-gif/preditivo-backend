@@ -101,6 +101,18 @@ router.get('/', async (req, res) => {
   }
 });
 
+// Preview slug without creating a market (used by admin form)
+router.get('/preview-slug', async (req, res) => {
+  try {
+    const { title } = req.query;
+    if (!title) return res.status(400).json({ error: 'title obrigatorio' });
+    const slug = generateSlug(title);
+    res.json({ slug });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Lookup by slug (must come before /:id to avoid conflicts)
 router.get('/by-slug/:slug', async (req, res) => {
   try {

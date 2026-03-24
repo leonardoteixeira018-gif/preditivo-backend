@@ -849,6 +849,31 @@ router.post('/markets', async (req, res) => {
   }
 });
 
+// GET /admin/markets/:id/bet-stats — bet breakdown for resolve modal
+router.get('/markets/:id/bet-stats', async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT
+        COUNT(*) FILTER (WHERE side = 'yes' AND status = 'open')           AS bets_yes,
+        COUNT(*) FILTER (WHERE side = 'no'  AND status = 'open')           AS bets_no,
+        COALESCE(SUM(amount) FILTER (WHERE side = 'yes' AND status = 'open'), 0) AS vol_yes,
+        COALESCE(SUM(amount) FILTER (WHERE side = 'no'  AND status = 'open'), 0) AS vol_no,
+        COALESCE(SUM(amount) FILTER (WHERE status = 'open'), 0)            AS total_volume
+      FROM bets WHERE market_id = $1
+    `, [req.params.id]);
+    const r = result.rows[0];
+    res.json({
+      bets_yes:     parseInt(r.bets_yes, 10),
+      bets_no:      parseInt(r.bets_no, 10),
+      vol_yes:      parseFloat(r.vol_yes),
+      vol_no:       parseFloat(r.vol_no),
+      total_volume: parseFloat(r.total_volume)
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.post('/markets/:id/resolve', async (req, res) => {
   const client = await pool.connect();
 
