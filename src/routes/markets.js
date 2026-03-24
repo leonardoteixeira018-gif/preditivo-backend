@@ -123,20 +123,25 @@ router.get('/:id', async (req, res) => {
 
 router.post('/', adminAuth, async (req, res) => {
   try {
-    const { title, description, category, ends_at, closes_at, image_url } = req.body;
+    const { title, description, category, ends_at, closes_at, image_url, initial_prob } = req.body;
     const marketEndsAt = ends_at || closes_at;
     if (!title || !marketEndsAt) {
       return res.status(400).json({ error: 'title e ends_at sao obrigatorios' });
     }
 
+    // Distribute q_yes/q_no proportionally to initial_prob (total liquidity = 200)
+    const prob = Math.min(95, Math.max(5, parseFloat(initial_prob) || 50)) / 100;
+    const q_yes = Math.round(200 * prob);
+    const q_no  = 200 - q_yes;
+
     const result = await pool.query(
       `INSERT INTO markets (title, description, category, ends_at, q_yes, q_no, b, volume, status, image_url)
-       VALUES ($1, $2, $3, $4, 100, 100, 100, 0, 'open', $5)
+       VALUES ($1, $2, $3, $4, $5, $6, 100, 0, 'open', $7)
        RETURNING *`,
-      [title, description || null, category || 'politica', marketEndsAt, image_url || null]
+      [title, description || null, category || 'politica', marketEndsAt, q_yes, q_no, image_url || null]
     );
 
-    cache.del(CACHE_KEY_LIST); // Invalida cache ao criar novo mercado
+    cache.del(CACHE_KEY_LIST);
     res.json(result.rows[0]);
   } catch (err) {
     res.status(500).json({ error: err.message });
