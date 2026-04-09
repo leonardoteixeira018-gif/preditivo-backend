@@ -1,7 +1,7 @@
 // v2026.03.21 — fix: CSRF bypass para Bearer token; getToken() removido de kyc/suitability
 require('dotenv').config();
 const express = require('express');
-const rateLimit = require('express-rate-limit');
+const { rateLimit, ipKeyGenerator } = require('express-rate-limit');
 const cors = require('cors');
 const cookieParser = require('cookie-parser');
 const app = express();
@@ -122,10 +122,10 @@ function extractUserId(req) {
     let token = null;
     if (authHeader && authHeader.startsWith('Bearer ')) token = authHeader.slice(7);
     else if (req.cookies?.auth_token) token = req.cookies.auth_token;
-    if (!token) return req.ip;
+    if (!token) return ipKeyGenerator(req);
     const decoded = jwt.decode(token);
-    return decoded?.id || req.ip;
-  } catch { return req.ip; }
+    return decoded?.id || ipKeyGenerator(req);
+  } catch { return ipKeyGenerator(req); }
 }
 
 // betUserLimiter: limita apostas por usuário (user_id do JWT)
