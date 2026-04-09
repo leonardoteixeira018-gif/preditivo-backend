@@ -41,32 +41,34 @@ async function uniqueSlug(base, excludeId = null) {
 }
 
 router.get('/stats', async (req, res) => {
-  try {
-    const cached = cache.get(CACHE_KEY_STATS);
-    if (cached) return res.json(cached);
+  const cached = cache.get(CACHE_KEY_STATS);
+  if (cached) return res.json(cached);
 
-    // Optimized: avoid COUNT(DISTINCT) on large tables, use subquery instead
-    const result = await pool.query(`
-      WITH
-        vol     AS (SELECT COALESCE(SUM(amount), 0) AS total_volume FROM bets WHERE status = 'open'),
-        mkt     AS (SELECT COUNT(*) AS active_markets FROM markets WHERE resolved_at IS NULL AND status = 'open'),
-        traders AS (SELECT COUNT(*) AS active_traders FROM (
-          SELECT DISTINCT user_id FROM bets WHERE status = 'open' LIMIT 100000
-        ) AS t)
-      SELECT vol.total_volume, mkt.active_markets, traders.active_traders
-      FROM vol, mkt, traders
-    `);
+  const client = await pool.connect();
+  try {
+    // Timeout curto para não bloquear quando banco está sob pressão
+    await client.query('SET LOCAL statement_timeout = 5000');
+
+    const [volResult, mktResult, tradersResult] = await Promise.all([
+      client.query('SELECT COALESCE(SUM(amount), 0) AS total_volume FROM bets'),
+      client.query("SELECT COUNT(*) AS active_markets FROM markets WHERE resolved_at IS NULL AND status = 'open'"),
+      client.query('SELECT COUNT(DISTINCT user_id) AS active_traders FROM bets WHERE created_at > NOW() - INTERVAL \'30 days\''),
+    ]);
 
     const stats = {
-      total_volume: parseFloat(result.rows[0].total_volume),
-      active_markets: parseInt(result.rows[0].active_markets, 10),
-      active_traders: parseInt(result.rows[0].active_traders, 10)
+      total_volume: parseFloat(volResult.rows[0].total_volume),
+      active_markets: parseInt(mktResult.rows[0].active_markets, 10),
+      active_traders: parseInt(tradersResult.rows[0].active_traders, 10)
     };
 
     cache.set(CACHE_KEY_STATS, stats, 60_000); // 60s TTL
     res.json(stats);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    // Se banco estiver sobrecarregado, retorna último cache ou zeros (nunca 500)
+    const fallback = cache.get(CACHE_KEY_STATS) || { total_volume: 0, active_markets: 0, active_traders: 0 };
+    res.json(fallback);
+  } finally {
+    client.release();
   }
 });
 
