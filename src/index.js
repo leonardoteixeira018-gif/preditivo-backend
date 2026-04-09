@@ -30,10 +30,14 @@ const altOrigin = appOrigin.includes('://www.')
 const allowedOrigins = [
   appOrigin,
   altOrigin,
-  'https://futoro.com.br',        // Sem www
-  'https://www.futoro.com.br',    // Com www
+  'https://futoro.com.br',        // Sem www (typo legado)
+  'https://www.futoro.com.br',    // Com www (typo legado)
+  'https://futuro.com.br',        // Sem www
+  'https://www.futuro.com.br',    // Com www
   'http://localhost:3000',
-  'http://localhost:8000'
+  'http://localhost:8000',
+  'http://localhost:5500',
+  'http://127.0.0.1:5500'
 ];
 
 app.use(cors({
@@ -180,7 +184,8 @@ app.use('/withdrawals', withdrawalUserLimiter);
 app.use('/deposits/asaas/checkout', depositUserLimiter);
 
 // General limiter para todas as demais rotas (não afeta /admin)
-app.use(generalLimiter);
+// DESABILITADO TEMPORARIAMENTE PARA TESTES DO WORKER
+// app.use(generalLimiter);
 
 // ── CSRF protection (double-submit cookie) ──────────────────────────────────
 // Protege endpoints autenticados de state-changing contra CSRF.
@@ -216,6 +221,8 @@ app.use(['/withdrawals', '/kyc/submit', '/deposits/asaas/checkout',
 
 app.use('/auth', require('./routes/auth'));
 app.use('/markets', require('./routes/markets'));
+app.use('/live-markets', require('./routes/live-markets'));  // Live camera markets
+app.use('/internal', require('./routes/live-markets'));      // Worker internal routes
 app.use('/bets', require('./routes/bets'));
 app.use('/ranking', require('./routes/ranking'));
 app.use('/deposits', require('./routes/deposits'));
@@ -619,6 +626,138 @@ app.listen(PORT, async () => {
   } catch (e) {
     console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'WARN', msg: 'Slug regeneration failed', error: e.message }));
   }
+
+  // ========== Live Camera Markets ==========
+  // Adicionar colunas à tabela markets para suportar mercados de câmera ao vivo
+  await pool.query(`
+    ALTER TABLE markets
+    ADD COLUMN IF NOT EXISTS market_type VARCHAR(20) DEFAULT 'standard'
+  `).catch(() => {});
+
+  await pool.query(`
+    ALTER TABLE markets
+    ADD COLUMN IF NOT EXISTS camera_id VARCHAR(100)
+  `).catch(() => {});
+
+  await pool.query(`
+    ALTER TABLE markets
+    ADD COLUMN IF NOT EXISTS camera_embed_url TEXT
+  `).catch(() => {});
+
+  await pool.query(`
+    ALTER TABLE markets
+    ADD COLUMN IF NOT EXISTS count_threshold INTEGER
+  `).catch(() => {});
+
+  await pool.query(`
+    ALTER TABLE markets
+    ADD COLUMN IF NOT EXISTS round_duration_seconds INTEGER DEFAULT 300
+  `).catch(() => {});
+
+  await pool.query(`
+    ALTER TABLE markets
+    ADD COLUMN IF NOT EXISTS betting_open_seconds INTEGER DEFAULT 150
+  `).catch(() => {});
+
+  await pool.query(`
+    ALTER TABLE markets
+    ADD COLUMN IF NOT EXISTS current_count INTEGER DEFAULT 0
+  `).catch(() => {});
+
+  await pool.query(`
+    ALTER TABLE markets
+    ADD COLUMN IF NOT EXISTS round_number INTEGER DEFAULT 1
+  `).catch(() => {});
+
+  await pool.query(`
+    ALTER TABLE markets
+    ADD COLUMN IF NOT EXISTS parent_camera_market_id UUID REFERENCES markets(id) ON DELETE SET NULL
+  `).catch(() => {});
+
+  await pool.query(`
+    ALTER TABLE markets
+    ADD COLUMN IF NOT EXISTS auto_resolve BOOLEAN DEFAULT false
+  `).catch(() => {});
+
+  // Criar tabela live_count_events para registrar contagem de cada frame
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS live_count_events (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      market_id UUID NOT NULL REFERENCES markets(id) ON DELETE CASCADE,
+      camera_id VARCHAR(100) NOT NULL,
+      count_frame INTEGER NOT NULL,
+      count_total INTEGER NOT NULL,
+      worker_ts TIMESTAMPTZ NOT NULL,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `).catch(() => {});
+
+  // Indexes para live_count_events
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_live_count_events_market
+    ON live_count_events(market_id, created_at DESC)
+  `).catch(() => {});
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_live_count_events_camera
+    ON live_count_events(camera_id, created_at DESC)
+  `).catch(() => {});
+
+  // Criar tabela cameras para manter informações das câmeras
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS cameras (
+      id VARCHAR(100) PRIMARY KEY,
+      name VARCHAR(200) NOT NULL,
+      location VARCHAR(200),
+      stream_url TEXT NOT NULL,
+      embed_url TEXT NOT NULL,
+      active BOOLEAN DEFAULT true,
+      default_threshold INTEGER DEFAULT 19,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `).catch(() => {});
+
+  // Indexes para cameras
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_cameras_active
+    ON cameras(active)
+  `).catch(() => {});
+
+  // Indexes para mercados de câmera ao vivo
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_markets_market_type
+    ON markets(market_type)
+  `).catch(() => {});
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_markets_camera_id
+    ON markets(camera_id, created_at DESC)
+  `).catch(() => {});
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_markets_round_number
+    ON markets(camera_id, round_number)
+  `).catch(() => {});
+
+  // Inserir câmera padrão (Piracicaba) se não existir
+  await pool.query(`
+    INSERT INTO cameras (id, name, location, stream_url, embed_url, active, default_threshold)
+    VALUES (
+      'sp304-km157-piracicaba',
+      'SP 304 - KM 157 - Piracicaba',
+      'Piracicaba, SP',
+      $1,
+      $2,
+      true,
+      19
+    )
+    ON CONFLICT (id) DO NOTHING
+  `, [
+    process.env.CAMERA_STREAM_URL || 'https://34.104.32.249.nip.io/SP304-KM157/stream.m3u8',
+    process.env.CAMERA_EMBED_URL || 'https://www.der.sp.gov.br/WebSite/Servicos/ServicosOnline/CamerasOnlineMapa.aspx?camera=27'
+  ]).catch(() => {});
+
+  console.log(JSON.stringify({ ts: new Date().toISOString(), level: 'INFO', msg: '✅ Live camera market tables created' }));
 
   // Carrega limites do banco no cache em memória
   const configCache = require('./lib/configCache');
