@@ -45,12 +45,14 @@ router.get('/stats', async (req, res) => {
     const cached = cache.get(CACHE_KEY_STATS);
     if (cached) return res.json(cached);
 
-    // Single CTE query instead of 3 separate queries
+    // Optimized: avoid COUNT(DISTINCT) on large tables, use subquery instead
     const result = await pool.query(`
       WITH
-        vol     AS (SELECT COALESCE(SUM(amount), 0) AS total_volume FROM bets),
+        vol     AS (SELECT COALESCE(SUM(amount), 0) AS total_volume FROM bets WHERE status = 'open'),
         mkt     AS (SELECT COUNT(*) AS active_markets FROM markets WHERE resolved_at IS NULL AND status = 'open'),
-        traders AS (SELECT COUNT(DISTINCT user_id) AS active_traders FROM bets WHERE status = 'open')
+        traders AS (SELECT COUNT(*) AS active_traders FROM (
+          SELECT DISTINCT user_id FROM bets WHERE status = 'open' LIMIT 100000
+        ) AS t)
       SELECT vol.total_volume, mkt.active_markets, traders.active_traders
       FROM vol, mkt, traders
     `);
