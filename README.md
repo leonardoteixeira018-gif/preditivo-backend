@@ -1,6 +1,6 @@
 # Bubuya. — Backend
 
-> Plataforma brasileira de mercados de previsão. Contratos binários sobre eventos do mundo real, com precificação dinâmica via AMM (Automated Market Maker).
+> Backend de um projeto de estudo sobre mercados de previsão (estilo Polymarket/Kalshi): contratos binários sobre eventos do mundo real, com precificação dinâmica via AMM (Automated Market Maker).
 
 ---
 
@@ -21,7 +21,7 @@
 
 ## Estado atual do projeto (auditado em Março 2026)
 
-> Status: experimental / domínio atualmente inativo. O frontend rodava em [bubuya.com.br](https://www.bubuya.com.br), domínio que não está ativo no momento — ver [`preditivo`](https://github.com/leonardotteixeira/preditivo) para o contexto completo do projeto.
+> Projeto de estudo pessoal sobre mercados de previsão, precificação via AMM e como estruturar compliance regulatório num produto financeiro. O frontend rodava em [bubuya.com.br](https://www.bubuya.com.br), domínio que não está ativo no momento — ver [`preditivo`](https://github.com/leonardotteixeira/preditivo) para o contexto completo do projeto.
 
 Na época em que este README foi escrito pela última vez, a API tinha as seguintes funcionalidades implementadas:
 
@@ -189,9 +189,9 @@ curl http://localhost:3000/health
 
 ---
 
-## Histórico de desenvolvimento
+## Evolução do estudo
 
-Registro de como o projeto evoluiu enquanto estava ativo — não é um plano em execução; o projeto está parado no estágio descrito na seção Status, e as fases 6-8 nunca chegaram a começar.
+Como fui construindo e aprendendo, fase a fase — as fases 1-5 foram implementadas de fato; 6-8 ficaram como ideia de para onde o projeto poderia ir, caso continuasse.
 
 ### FASE 1 — MVP (concluída)
 - Autenticação completa (registro, login, logout, recuperação de senha)
@@ -292,7 +292,7 @@ preditivo-backend/
 
 ## Status
 
-Experimental / domínio atualmente inativo. Este backend foi desenvolvido para dar suporte ao [`preditivo`](https://github.com/leonardotteixeira/preditivo) (frontend do Bubuya) e permanece como parte do meu portfólio — as fases de compliance regulatório (5-7) foram planejadas mas não colocadas em prática, e o projeto está parado no estágio atual.
+Projeto de estudo sobre mercados de previsão, precificação via AMM e compliance regulatório (KYC/AML, suitability) — não uma tentativa de empresa. Este backend dá suporte ao [`preditivo`](https://github.com/leonardotteixeira/preditivo) (frontend do Bubuya); o domínio bubuya.com.br não está ativo no momento. Mantido aqui como parte do meu portfólio.
 
 ## Licença
 
