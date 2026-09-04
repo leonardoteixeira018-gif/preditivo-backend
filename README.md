@@ -19,9 +19,11 @@
 
 ---
 
-## Estado atual do produto (Março 2026)
+## Estado atual do projeto (auditado em Março 2026)
 
-A plataforma está **em produção em** [bubuya.com.br](https://www.bubuya.com.br) com as seguintes funcionalidades:
+> Status: experimental / domínio atualmente inativo. O frontend rodava em [bubuya.com.br](https://www.bubuya.com.br), domínio que não está ativo no momento — ver [`preditivo`](https://github.com/leonardotteixeira/preditivo) para o contexto completo do projeto.
+
+Na época em que este README foi escrito pela última vez, a API tinha as seguintes funcionalidades implementadas:
 
 ### Usuarios & Auth
 - Cadastro com verificação por e-mail + código OTP
@@ -189,7 +191,7 @@ curl http://localhost:3000/health
 
 ## Roadmap
 
-### ✅ FASE 1 — MVP (Concluída)
+### FASE 1 — MVP (concluída)
 - Autenticação completa (registro, login, logout, recuperação de senha)
 - CRUD de mercados + sistema de apostas com AMM
 - Depósitos e saques com PIX
@@ -197,28 +199,28 @@ curl http://localhost:3000/health
 - Painel Admin funcional
 - Deploy em produção (Railway + Supabase)
 
-### ✅ FASE 2 — Segurança & Auditoria (Concluída)
+### FASE 2 — Segurança & auditoria (concluída)
 - Logging estruturado com Winston e correlation ID
 - Auditoria de ações de usuários (`user_audit_logs`)
 - Remoção de mensagens de erro sensíveis das respostas da API
 - Endpoint de histórico de auditoria para usuários e admins
 - Blacklist de tokens com persistência em banco
 
-### ✅ FASE 3 — Performance & Escalabilidade (Concluída)
+### FASE 3 — Performance & escalabilidade (concluída)
 - Cache in-memory com TTL (mercados, stats, dashboard)
 - Invalidação de cache em mutações críticas
 - Rate limiting por user_id (não apenas por IP)
 - Otimização de queries com CTEs e Promise.all
 - Cache local de blacklist de tokens (evita query no DB a cada request)
 
-### ✅ FASE 4 — Dashboard Admin & Detecção de Anomalias (Concluída)
+### FASE 4 — Dashboard admin & detecção de anomalias (concluída)
 - Dashboard consolidado com CTE em query única
 - Detecção de saque rápido pós-depósito (< 60 min) → `risk_flag`
 - Log de aposta desproporcional ao saldo (> 50%)
 - Migração inline: coluna `risk_flag` em `withdrawals`
 
-### 🔄 FASE 5 — Compliance KYC/AML (Próxima)
-_Necessária para candidatura ao Sandbox Regulatório da CVM_
+### FASE 5 — Compliance KYC/AML (implementada, sem uso real)
+_Motivada pela regulação CVM aplicável a esse tipo de contrato — ver "Contexto regulatório" abaixo_
 - Coleta e validação de CPF (dígito verificador + bureau Serpro/Idwall)
 - Upload de documento de identidade + selfie
 - Status KYC: `pending | approved | rejected`
@@ -226,7 +228,7 @@ _Necessária para candidatura ao Sandbox Regulatório da CVM_
 - Triagem PEP (Pessoa Exposta Politicamente) e sanções internacionais
 - Relatório automático ao COAF (transações > R$10.000/mês)
 
-### 📋 FASE 6 — Suitability & Limites Operacionais
+### FASE 6 — Suitability & limites operacionais (planejada, não iniciada)
 _Exigência regulatória CVM_
 - Questionário de perfil de investidor (5-8 perguntas)
 - Classificação: conservador / moderado / arrojado
@@ -234,14 +236,14 @@ _Exigência regulatória CVM_
 - Limites por mercado e volume máximo por usuário/mês
 - Segregação de fundos via parceiro regulado (Celcoin/Asaas/Stark Bank)
 
-### 📋 FASE 7 — Candidatura Sandbox CVM
+### FASE 7 — Candidatura Sandbox CVM (planejada, não iniciada)
 - Constituição jurídica formal (CNPJ + compliance officer)
 - Política de privacidade LGPD completa
 - Canal de ouvidoria com SLA de 5 dias úteis
 - Documentação técnica e jurídica para formulário CVM (2.000+ chars/seção)
 - Submissão na próxima rodada de admissão do Sandbox Regulatório
 
-### 🔮 FASE 8 — Pós-Sandbox (Autorização Permanente)
+### FASE 8 — Pós-Sandbox / autorização permanente (ideia de longo prazo)
 - Integração com corretoras e distribuidores parceiros
 - API pública para criadores de mercado terceiros
 - Mercados com liquidez institucional
@@ -249,25 +251,9 @@ _Exigência regulatória CVM_
 
 ---
 
-## Estratégia Regulatória
+## Contexto regulatório
 
-### Por que o Sandbox da CVM?
-
-Os contratos da Bubuya (SIM/NÃO com liquidação em R$1,00 baseada em eventos futuros) enquadram-se na definição de **valor mobiliário** conforme o Art. 2º, IX da Lei 6.385/76. Operar sem autorização da CVM representa risco jurídico. O **Sandbox Regulatório (Instrução CVM 626)** é o mecanismo correto para plataformas inovadoras que ainda não têm categoria regulatória própria no Brasil.
-
-### Precedente Internacional
-- 🇺🇸 **Kalshi** — operando sob regulação da CFTC desde 2021
-- 🇺🇸 **Polymarket** — maior mercado preditivo do mundo (~$500M/mês em volume)
-- 🇺🇸 **Manifold** — mercado preditivo sem dinheiro real (educacional)
-
-### Narrativa para a CVM
-> *"Somos uma plataforma de descoberta de preço de eventos futuros, análoga ao que a Kalshi opera nos EUA sob regulação da CFTC. O modelo complementa o mercado de capitais ao oferecer instrumentos de hedge de eventos para o público em geral, sem alavancagem e com perda máxima igual ao valor investido."*
-
-### Vantagens competitivas para a candidatura
-- ✅ Prova de conceito validada com volume real em produção
-- ✅ Infraestrutura de segurança e auditoria já implementada
-- ✅ Modelo de risco limitado (sem alavancagem, perda máxima = investimento)
-- ✅ Sem precedente regulatório no Brasil → candidatura prioritária no sandbox
+Contratos SIM/NÃO com liquidação em dinheiro sobre eventos futuros se aproximam da definição de valor mobiliário do Art. 2º, IX da Lei 6.385/76 — por isso o roadmap inclui KYC/AML e suitability (Fases 5 e 6) mesmo sem uso real ainda: foi um exercício de pensar a plataforma como se precisasse eventualmente se enquadrar num regime regulatório (o Sandbox Regulatório da CVM, Instrução CVM 626, seria o caminho aplicável), não uma candidatura em andamento. Kalshi e Polymarket, nos EUA, operam nesse mesmo tipo de contrato sob regulação da CFTC — foram a referência usada para pensar o desenho do produto.
 
 ---
 
@@ -302,6 +288,10 @@ preditivo-backend/
 
 ---
 
+## Status
+
+Experimental / domínio atualmente inativo. Este backend foi desenvolvido para dar suporte ao [`preditivo`](https://github.com/leonardotteixeira/preditivo) (frontend do Bubuya) e permanece como parte do meu portfólio — as fases de compliance regulatório (5-7) foram planejadas mas não colocadas em prática, e o projeto está parado no estágio atual.
+
 ## Licença
 
-Proprietário — todos os direitos reservados. © 2026 Bubuya.
+Código-fonte disponível para fins de portfólio. Todos os direitos reservados © Leonardo Teixeira.

@@ -170,7 +170,7 @@ app.use('/admin/login', adminLoginLimiter);
 // Admin: limiter próprio + router ANTES do generalLimiter.
 // Quando o adminRouter responde, a req encerra — generalLimiter nunca executa para /admin/*
 app.use('/admin', adminLimiter);
-// ⚠️ admin-auth DEVE vir ANTES de admin.js — admin.js aplica adminAuth globalmente
+// admin-auth DEVE vir ANTES de admin.js — admin.js aplica adminAuth globalmente
 // e bloquearia o POST /admin/login antes de chegar ao roteador de autenticação
 app.use('/admin', require('./routes/admin-auth')); // Login/logout (sem auth)
 app.use('/admin', require('./routes/admin'));       // Todas as outras rotas (exige auth)
