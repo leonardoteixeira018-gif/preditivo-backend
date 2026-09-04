@@ -189,7 +189,9 @@ curl http://localhost:3000/health
 
 ---
 
-## Roadmap
+## Histórico de desenvolvimento
+
+Registro de como o projeto evoluiu enquanto estava ativo — não é um plano em execução; o projeto está parado no estágio descrito na seção Status, e as fases 6-8 nunca chegaram a começar.
 
 ### FASE 1 — MVP (concluída)
 - Autenticação completa (registro, login, logout, recuperação de senha)
@@ -228,7 +230,7 @@ _Motivada pela regulação CVM aplicável a esse tipo de contrato — ver "Conte
 - Triagem PEP (Pessoa Exposta Politicamente) e sanções internacionais
 - Relatório automático ao COAF (transações > R$10.000/mês)
 
-### FASE 6 — Suitability & limites operacionais (planejada, não iniciada)
+### FASE 6 — Suitability & limites operacionais (ideia, nunca iniciada)
 _Exigência regulatória CVM_
 - Questionário de perfil de investidor (5-8 perguntas)
 - Classificação: conservador / moderado / arrojado
@@ -236,14 +238,14 @@ _Exigência regulatória CVM_
 - Limites por mercado e volume máximo por usuário/mês
 - Segregação de fundos via parceiro regulado (Celcoin/Asaas/Stark Bank)
 
-### FASE 7 — Candidatura Sandbox CVM (planejada, não iniciada)
+### FASE 7 — Candidatura Sandbox CVM (ideia, nunca iniciada)
 - Constituição jurídica formal (CNPJ + compliance officer)
 - Política de privacidade LGPD completa
 - Canal de ouvidoria com SLA de 5 dias úteis
 - Documentação técnica e jurídica para formulário CVM (2.000+ chars/seção)
 - Submissão na próxima rodada de admissão do Sandbox Regulatório
 
-### FASE 8 — Pós-Sandbox / autorização permanente (ideia de longo prazo)
+### FASE 8 — Pós-Sandbox / autorização permanente (ideia, nunca desenvolvida)
 - Integração com corretoras e distribuidores parceiros
 - API pública para criadores de mercado terceiros
 - Mercados com liquidez institucional
